@@ -1,0 +1,22 @@
+.pio/
+.platformio/
+.venv/
+.DS_Store
+
+# Python/backend build and runtime state.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+data/
+
+# Device-specific recovery image. Keep it local.
+backups/*.bin
+backups/*.sha256
