@@ -1,4 +1,4 @@
-.PHONY: firmware-build firmware-unit firmware-upload firmware-monitor backend-install backend-venv backend-test backend-lint backend-run contract-generate contract-check
+.PHONY: firmware-build firmware-unit firmware-upload firmware-monitor tools-test backend-install backend-venv backend-test backend-lint backend-run contract-generate contract-check
 
 PYTHON ?= python3
 PIO := PLATFORMIO_CORE_DIR=$(CURDIR)/.platformio $(CURDIR)/.venv/bin/pio
@@ -6,17 +6,37 @@ BACKEND_PYTHON := $(CURDIR)/backend/.venv/bin/python
 BACKEND_PYTEST := $(CURDIR)/backend/.venv/bin/pytest
 BACKEND_RUFF := $(CURDIR)/backend/.venv/bin/ruff
 BACKEND_UVICORN := $(CURDIR)/backend/.venv/bin/uvicorn
-NATIVE_TEST := $(CURDIR)/.build/native/telemetry_queue_test
+NATIVE_BUILD := $(CURDIR)/.build/native
 
 firmware-build:
 	$(PIO) run
 
 firmware-unit:
-	mkdir -p $(CURDIR)/.build/native
+	mkdir -p $(NATIVE_BUILD)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
 		test/native/test_telemetry_queue.cpp src/telemetry.cpp \
-		-o $(NATIVE_TEST)
-	$(NATIVE_TEST)
+		-o $(NATIVE_BUILD)/telemetry_queue_test
+	$(NATIVE_BUILD)/telemetry_queue_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_telemetry_json.cpp src/telemetry_json.cpp \
+		-o $(NATIVE_BUILD)/telemetry_json_test
+	$(NATIVE_BUILD)/telemetry_json_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ingest_ack.cpp src/ingest_ack.cpp \
+		-o $(NATIVE_BUILD)/ingest_ack_test
+	$(NATIVE_BUILD)/ingest_ack_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_spool_name.cpp src/spool_name.cpp \
+		-o $(NATIVE_BUILD)/spool_name_test
+	$(NATIVE_BUILD)/spool_name_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_provisioning_protocol.cpp \
+		src/provisioning_protocol.cpp \
+		-o $(NATIVE_BUILD)/provisioning_protocol_test
+	$(NATIVE_BUILD)/provisioning_protocol_test
+
+tools-test:
+	$(PYTHON) -m unittest discover -s tools/tests -v
 
 firmware-upload:
 	$(PIO) run --target upload

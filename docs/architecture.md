@@ -48,8 +48,10 @@ existing record identity is an HTTP 409 rather than a silent overwrite.
 - Records are removed only after HTTP 200, matching response `batch_id`,
   `stored + duplicates == request.records.length`, and matching `max_seq`.
 - Network failures, timeouts, HTTP 429, and HTTP 5xx use bounded exponential
-  backoff with jitter. HTTP 401, 409, and 422 are permanent/operator errors and
-  stop automatic retry of that envelope instead of creating a tight loop.
+  backoff with jitter. HTTP 401 or an endpoint 404 halts uploads globally and
+  leaves the exact envelope in the retry spool; USB reprovisioning plus restart
+  retries it with corrected connection settings. Payload-specific HTTP 409 and
+  422 responses move only that envelope to the diagnostic dead-letter queue.
 - Device-originated touch feedback is uploaded only after the telemetry record
   it references has been acknowledged. This preserves its original uptime and
   reconstructed event time without accepting dangling calibration labels.
@@ -75,8 +77,10 @@ existing record identity is an HTTP 409 rather than a silent overwrite.
   Thus the gesture cannot contaminate its own human label or produce a 404.
 - Applying a new configuration closes the current batch. One envelope never
   mixes records produced under different `applied_config_revision` values.
-- Permanent-error envelopes move to a bounded dead-letter/diagnostic queue so
-  one HTTP 401, 409, or 422 cannot block later valid telemetry.
+- Payload-specific permanent-error envelopes move to a bounded
+  dead-letter/diagnostic queue so one HTTP 409 or 422 cannot block later valid
+  telemetry. Credential-wide 401 and endpoint-wide 404 errors halt instead of
+  dead-lettering every otherwise valid envelope.
 
 `presence_api.schemas.TelemetryBatch` is the single executable contract used by
 the API. `contracts/telemetry-v1.schema.json` is generated from that model and
@@ -131,7 +135,10 @@ change it, because it is part of every idempotency and history key.
 
 - Raw microphone audio never leaves the device and is never stored.
 - NVS is reserved for low-frequency settings such as Wi-Fi credentials, API
-  token, and the latest applied configuration revision.
+  token, and the latest applied configuration revision. Provisioning writes an
+  inactive settings slot completely before atomically switching the active-slot
+  marker, preserving the previous valid configuration across interrupted
+  updates.
 - SQLite on `devb` is the authoritative history.
 - The Core2's internal flash is only an outage spool; it is not the primary
   database.
@@ -148,3 +155,18 @@ The following validated behavior must survive every firmware refactor:
 - Stop the shared I2S speaker before starting the microphone.
 - PSRAM-backed 8-bit display canvas with the partial-update fallback.
 - Digital PIR on GPIO36.
+
+## Transport security boundary
+
+The first deployed device transport is plain HTTP to the explicitly bound
+`192.168.0.46:8081` trusted-LAN endpoint. Bearer authentication prevents
+unauthenticated API use but does not encrypt credentials or telemetry. The
+service must not be exposed to an untrusted LAN or public interface. HTTPS is
+not accepted by provisioning until the firmware has a real certificate trust
+configuration; it never falls back to an insecure TLS client.
+
+USB provisioning also treats the attached host and serial endpoint as trusted.
+Its short-lived challenge supplies freshness and transaction correlation, not
+proof of physical presence. A future hardened flow must gate configured-device
+replacement on a Core2 touch/long-press and confirm the displayed identity
+before the host sends credentials.

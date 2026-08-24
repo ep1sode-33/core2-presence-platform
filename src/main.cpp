@@ -2,12 +2,17 @@
 #include <M5Unified.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <inttypes.h>
 #include <driver/i2s.h>
+#include <esp_system.h>
 
+#include "device_settings.h"
 #include "presence_types.h"
+#include "provisioning_protocol.h"
 #include "runtime_identity.h"
 #include "telemetry.h"
+#include "telemetry_uploader.h"
 
 namespace {
 
@@ -25,6 +30,9 @@ constexpr uint64_t kTouchWakeMs = 15000;
 constexpr uint64_t kDisplayIntervalMs = 150;
 constexpr uint64_t kSerialIntervalMs = 250;
 constexpr uint64_t kTelemetryIntervalMs = 1000;
+constexpr uint64_t kProvisioningChallengeLifetimeMs = 2 * 60 * 1000;
+constexpr uint64_t kProvisioningRestartDelayMs = 750;
+constexpr size_t kProvisioningLineCapacity = 768;
 
 // Match M5Stack's original SPM1423 capture layout: 44.1 kHz and a 512-byte
 // read (256 signed 16-bit samples). The legacy ESP32 PDM peripheral is
@@ -49,6 +57,8 @@ uint64_t lastDisplayMs = 0;
 uint64_t lastSerialMs = 0;
 uint64_t lastTelemetrySampleMs = 0;
 uint64_t nextTelemetrySeq = 0;
+uint64_t provisioningChallengeExpiresMs = 0;
+uint64_t provisioningRestartMs = 0;
 
 float micRms = 0.0f;
 float micEnvelope = 0.0f;
@@ -66,7 +76,14 @@ bool micBeginOk = false;
 bool micEnvelopeInitialized = false;
 bool displayFrameReady = false;
 bool fallbackUiInitialized = false;
+bool deviceSettingsConfigured = false;
+bool provisioningChallengeActive = false;
+bool provisioningLineOverflow = false;
+bool provisioningBrightnessOverride = false;
 uint8_t currentBrightness = 255;
+char provisioningChallenge[9] = {};
+char provisioningLine[kProvisioningLineCapacity] = {};
+size_t provisioningLineLength = 0;
 
 const char* stateName(PresenceState value) {
   return presenceStateDisplayName(value);
@@ -109,6 +126,155 @@ void forceCore2DisplayPower() {
   M5.Display.powerSaveOff();
   currentBrightness = 254;
   setBrightness(255);
+}
+
+void restoreStateBrightness() {
+  switch (state) {
+    case PresenceState::kCalibrating:
+    case PresenceState::kPresent:
+      setBrightness(kOnBrightness);
+      break;
+    case PresenceState::kCooldown:
+      setBrightness(kCooldownBrightness);
+      break;
+    case PresenceState::kIdle:
+      setBrightness(0);
+      break;
+  }
+}
+
+void securelyClear(void* data, size_t size) {
+  volatile uint8_t* bytes = static_cast<volatile uint8_t*>(data);
+  while (size-- > 0) {
+    *bytes++ = 0;
+  }
+}
+
+const char* provisioningErrorCode(ProvisioningError error) {
+  switch (error) {
+    case ProvisioningError::kOk:
+      return "OK";
+    case ProvisioningError::kNullArgument:
+      return "NULL_ARGUMENT";
+    case ProvisioningError::kInvalidCommand:
+      return "INVALID_COMMAND";
+    case ProvisioningError::kInvalidFieldCount:
+      return "INVALID_FIELD_COUNT";
+    case ProvisioningError::kInvalidChallenge:
+      return "INVALID_CHALLENGE";
+    case ProvisioningError::kInvalidBase64Url:
+      return "INVALID_BASE64URL";
+    case ProvisioningError::kDecodedFieldTooLong:
+      return "FIELD_TOO_LONG";
+    case ProvisioningError::kEmbeddedNul:
+      return "EMBEDDED_NUL";
+    case ProvisioningError::kInvalidSsid:
+      return "INVALID_SSID";
+    case ProvisioningError::kInvalidBaseUrl:
+      return "INVALID_BASE_URL";
+    case ProvisioningError::kInvalidToken:
+      return "INVALID_TOKEN";
+    case ProvisioningError::kInvalidSettings:
+      return "INVALID_SETTINGS";
+  }
+  return "UNKNOWN";
+}
+
+void beginProvisioningChallenge(uint64_t now) {
+  if (!runtimeIdentity.deviceIdValid) {
+    Serial.println("PROVISION,ERROR,IDENTITY_INVALID");
+    return;
+  }
+  std::snprintf(provisioningChallenge, sizeof(provisioningChallenge), "%08" PRIx32,
+                esp_random());
+  provisioningChallengeActive = true;
+  provisioningChallengeExpiresMs =
+      now + kProvisioningChallengeLifetimeMs;
+  provisioningBrightnessOverride = true;
+  M5.Display.wakeup();
+  M5.Display.powerSaveOff();
+  setBrightness(kOnBrightness);
+  Serial.printf("PROVISION,CHALLENGE,%s,%s,%d\n", runtimeIdentity.deviceId,
+                provisioningChallenge, deviceSettingsConfigured ? 1 : 0);
+}
+
+void processProvisioningLine(const char* line, size_t length, uint64_t now) {
+  constexpr char kHello[] = "PROVISION,HELLO";
+  constexpr char kSetPrefix[] = "PROVISION,SET,";
+  if (length == sizeof(kHello) - 1 &&
+      std::memcmp(line, kHello, sizeof(kHello) - 1) == 0) {
+    beginProvisioningChallenge(now);
+    return;
+  }
+  if (length < sizeof(kSetPrefix) - 1 ||
+      std::memcmp(line, kSetPrefix, sizeof(kSetPrefix) - 1) != 0) {
+    if (length >= sizeof("PROVISION,") - 1 &&
+        std::memcmp(line, "PROVISION,", sizeof("PROVISION,") - 1) == 0) {
+      Serial.println("PROVISION,ERROR,INVALID_COMMAND");
+    }
+    return;
+  }
+  if (!provisioningChallengeActive ||
+      now >= provisioningChallengeExpiresMs) {
+    provisioningChallengeActive = false;
+    Serial.println("PROVISION,ERROR,INVALID_CHALLENGE");
+    return;
+  }
+
+  DeviceSettings candidate;
+  const ProvisioningError parseResult = parseProvisioningSetCommand(
+      line, length, provisioningChallenge, std::strlen(provisioningChallenge),
+      &candidate);
+  if (parseResult != ProvisioningError::kOk) {
+    securelyClear(&candidate, sizeof(candidate));
+    Serial.printf("PROVISION,ERROR,%s\n",
+                  provisioningErrorCode(parseResult));
+    return;
+  }
+
+  const DeviceSettingsStorageResult saveResult = saveDeviceSettings(candidate);
+  securelyClear(&candidate, sizeof(candidate));
+  if (saveResult != DeviceSettingsStorageResult::kOk) {
+    Serial.println("PROVISION,ERROR,STORAGE_WRITE_FAILED");
+    return;
+  }
+
+  deviceSettingsConfigured = true;
+  provisioningChallengeActive = false;
+  provisioningChallenge[0] = '\0';
+  Serial.printf("PROVISION,OK,%s,restart_required\n",
+                runtimeIdentity.deviceId);
+  Serial.flush();
+  provisioningRestartMs = now + kProvisioningRestartDelayMs;
+}
+
+void pollProvisioningSerial(uint64_t now) {
+  while (Serial.available() > 0) {
+    const int incoming = Serial.read();
+    if (incoming < 0) {
+      break;
+    }
+    const char character = static_cast<char>(incoming);
+    if (character == '\r') {
+      continue;
+    }
+    if (character == '\n') {
+      if (provisioningLineOverflow) {
+        Serial.println("PROVISION,ERROR,LINE_TOO_LONG");
+      } else if (provisioningLineLength > 0) {
+        processProvisioningLine(provisioningLine, provisioningLineLength, now);
+      }
+      securelyClear(provisioningLine, sizeof(provisioningLine));
+      provisioningLineLength = 0;
+      provisioningLineOverflow = false;
+      continue;
+    }
+    if (provisioningLineLength < sizeof(provisioningLine)) {
+      provisioningLine[provisioningLineLength++] = character;
+    } else {
+      provisioningLineOverflow = true;
+    }
+  }
 }
 
 void enqueueTransition(bool hasFromState, PresenceState fromState,
@@ -418,6 +584,22 @@ void drawBar(M5Canvas& canvas, int x, int y, int width, int height,
                   height - 4, TFT_BLACK);
 }
 
+template <typename Canvas>
+void drawProvisioningOverlay(Canvas& canvas) {
+  canvas.fillRoundRect(18, 54, 284, 132, 10, TFT_NAVY);
+  canvas.drawRoundRect(18, 54, 284, 132, 10, TFT_CYAN);
+  canvas.setTextDatum(middle_center);
+  canvas.setTextColor(TFT_WHITE, TFT_NAVY);
+  canvas.setTextSize(2);
+  canvas.drawString("USB PROVISIONING", 160, 78);
+  canvas.setTextSize(1);
+  canvas.drawString("Challenge shown over serial:", 160, 108);
+  canvas.setTextSize(3);
+  canvas.setTextColor(TFT_YELLOW, TFT_NAVY);
+  canvas.drawString(provisioningChallenge, 160, 143);
+  canvas.setTextDatum(top_left);
+}
+
 void drawDisplayFallback(uint64_t now) {
   if (!fallbackUiInitialized) {
     forceCore2DisplayPower();
@@ -446,9 +628,23 @@ void drawDisplayFallback(uint64_t now) {
                     elapsed < kBenchTestMs
                         ? (kBenchTestMs - elapsed) / 1000
                         : 0);
+  if (provisioningChallengeActive) {
+    drawProvisioningOverlay(M5.Display);
+  }
 }
 
 void drawDisplay(uint64_t now) {
+  if (provisioningChallengeActive &&
+      now >= provisioningChallengeExpiresMs) {
+    provisioningChallengeActive = false;
+    provisioningChallenge[0] = '\0';
+  }
+  if (provisioningChallengeActive) {
+    setBrightness(kOnBrightness);
+  } else if (provisioningBrightnessOverride) {
+    provisioningBrightnessOverride = false;
+    restoreStateBrightness();
+  }
   if (currentBrightness == 0 || now - lastDisplayMs < kDisplayIntervalMs) {
     return;
   }
@@ -518,6 +714,10 @@ void drawDisplay(uint64_t now) {
   displayFrame.drawString("MORE SENSITIVE", 52, 223);
   displayFrame.drawString("LESS SENSITIVE", 267, 223);
   displayFrame.setTextDatum(top_left);
+
+  if (provisioningChallengeActive) {
+    drawProvisioningOverlay(displayFrame);
+  }
 
   M5.Display.startWrite();
   displayFrame.pushSprite(0, 0);
@@ -593,7 +793,7 @@ void setup() {
                     PresenceState::kCalibrating, TransitionReason::kBoot,
                     bootMs);
 
-  Serial.println("Core2 Presence Lab v0.2");
+  Serial.println("Core2 Presence Lab v0.3");
   Serial.printf("IDENTITY,device_id,%s,boot_id,%s,valid,%d\n",
                 runtimeIdentity.deviceId, runtimeIdentity.bootId,
                 runtimeIdentity.deviceIdValid ? 1 : 0);
@@ -610,6 +810,31 @@ void setup() {
   Serial.println(
       "CSV,type,ms,pir,mic_rms,mic_envelope,mic_min,mic_max,noise,"
       "threshold,sound,state,brightness");
+
+  DeviceSettings loadedSettings;
+  const DeviceSettingsStorageResult settingsResult =
+      loadDeviceSettings(&loadedSettings);
+  deviceSettingsConfigured = settingsResult == DeviceSettingsStorageResult::kOk;
+  TelemetryUploaderSettings uploaderSettings;
+  uploaderSettings.configured = deviceSettingsConfigured;
+  uploaderSettings.startAfterUptimeMs = bootMs + kCalibrationMs + 1000;
+  if (deviceSettingsConfigured) {
+    std::memcpy(uploaderSettings.wifiSsid, loadedSettings.ssid,
+                sizeof(loadedSettings.ssid));
+    std::memcpy(uploaderSettings.wifiPassword, loadedSettings.password,
+                sizeof(loadedSettings.password));
+    std::memcpy(uploaderSettings.serverBaseUrl, loadedSettings.baseUrl,
+                sizeof(loadedSettings.baseUrl));
+    std::memcpy(uploaderSettings.apiToken, loadedSettings.token,
+                sizeof(loadedSettings.token));
+  }
+  const bool uploaderStarted =
+      startTelemetryUploader(runtimeIdentity, uploaderSettings, telemetryQueue);
+  securelyClear(&loadedSettings, sizeof(loadedSettings));
+  securelyClear(&uploaderSettings, sizeof(uploaderSettings));
+  Serial.printf("NETWORK,configured,%d,uploader_started,%d,settings_status,%u\n",
+                deviceSettingsConfigured ? 1 : 0, uploaderStarted ? 1 : 0,
+                static_cast<unsigned>(settingsResult));
 }
 
 void loop() {
@@ -623,6 +848,12 @@ void loop() {
   drawDisplay(now);
   printSerial(now);
   enqueueSample(now);
+  pollProvisioningSerial(now);
+
+  if (provisioningRestartMs != 0 && now >= provisioningRestartMs) {
+    Serial.flush();
+    ESP.restart();
+  }
 
   delay(1);
 }

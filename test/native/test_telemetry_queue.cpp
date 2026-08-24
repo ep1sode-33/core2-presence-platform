@@ -41,13 +41,16 @@ int main() {
          QueuePushResult::kCriticalDropped);
   assert(queue.droppedCritical() == 1);
 
+  TelemetryRecord copied[TelemetryQueue::kCapacity] = {};
+  assert(queue.copyPrefix(copied, TelemetryQueue::kCapacity) ==
+         TelemetryQueue::kCapacity);
   for (uint64_t expected = 0; expected < TelemetryQueue::kCapacity; ++expected) {
-    assert(queue.front() != nullptr);
-    assert(queue.front()->seq == expected);
-    assert(queue.pop());
+    assert(copied[expected].seq == expected);
   }
-  assert(queue.front() == nullptr);
-  assert(!queue.pop());
+  assert(queue.commitPrefix(copied, TelemetryQueue::kCapacity));
+  TelemetryRecord front;
+  assert(!queue.peek(front));
+  assert(!queue.commitPrefix(copied, 0));
 
   // Reuse every physical slot after head has wrapped around. Samples should
   // regain their full non-critical allowance once transitions are drained.
@@ -55,17 +58,23 @@ int main() {
     assert(queue.push(sample(1000 + index)) == QueuePushResult::kStored);
   }
   assert(queue.push(sample(2000)) == QueuePushResult::kSampleDropped);
+  assert(queue.copyPrefix(copied, sampleLimit) == sampleLimit);
   for (uint64_t expected = 1000; expected < 1000 + sampleLimit; ++expected) {
-    assert(queue.front() != nullptr);
-    assert(queue.front()->seq == expected);
-    assert(queue.pop());
+    assert(copied[expected - 1000].seq == expected);
   }
+  assert(queue.commitPrefix(copied, sampleLimit));
   assert(queue.size() == 0);
 
   // A transition may still consume a slot immediately after that wraparound.
   assert(queue.push(transition(3000)) == QueuePushResult::kStored);
-  assert(queue.front()->seq == 3000);
-  assert(queue.pop());
+  assert(queue.peek(front));
+  assert(front.seq == 3000);
+
+  TelemetryRecord wrong = front;
+  wrong.seq = 3001;
+  assert(!queue.commitPrefix(&wrong, 1));
+  assert(queue.size() == 1);
+  assert(queue.commitPrefix(&front, 1));
 
   assert(std::strcmp(presenceStateWireName(PresenceState::kPresent),
                      "present") == 0);

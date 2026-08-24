@@ -33,18 +33,45 @@ See `contracts/telemetry-v1.schema.json`, `contracts/api-v1.openapi.json`, and
 `docs/architecture.md` for the generated device/server contracts and runtime
 boundaries.
 
-## Firmware telemetry foundation
+## Firmware telemetry pipeline
 
 The hardware loop uses a 64-bit monotonic clock, a stable device ID derived
 from the ESP32 eFuse MAC, and a new random 128-bit boot ID on each startup.
-Once per second it places an immutable sensor snapshot in a fixed-size RAM
-queue; state transitions are queued immediately and have reserved capacity so
-ordinary samples cannot crowd them out. Sequence numbers are never reused,
-even when a full queue drops a record.
+Once per second it places an immutable sensor snapshot in a fixed-size,
+cross-core-safe RAM queue; state transitions are queued immediately and have
+reserved capacity so ordinary samples cannot crowd them out. Sequence numbers
+are never reused, even when a full queue drops a record.
 
-This stage deliberately performs no Wi-Fi, HTTP, NVS, or flash work. Those
-operations belong to the lower-priority uploader so display and sensor timing
-remain isolated from network stalls.
+A low-priority Core 0 worker freezes batches into LittleFS before attempting
+network I/O. It retries the exact immutable file, validates every field of the
+server acknowledgement, and deletes only the specifically acknowledged file.
+The worker uses bounded backoff and keeps old-boot envelopes under their
+original boot ID and clock anchor. Sensor sampling and display rendering never
+perform Wi-Fi, HTTP, NVS, or flash I/O.
+
+Wi-Fi, backend URL, and bearer token are provisioned over USB and stored in a
+two-slot NVS record so a reset during an update leaves the previous valid
+configuration intact:
+
+```sh
+python3 tools/provision_core2.py --ssid "Wi-Fi network"
+```
+
+The password and token are collected through hidden prompts, never command-line
+arguments. See `tools/README.md` for non-interactive input and port selection.
+The current uploader supports the explicit trusted-LAN HTTP endpoint only;
+HTTP does not encrypt the bearer token, so do not expose port 8081 to an
+untrusted LAN or the public internet. TLS certificate validation is a future
+transport gate, not something this firmware silently bypasses.
+
+USB provisioning likewise assumes the attached computer and serial device are
+trusted. The challenge prevents stale or crossed commands, but it is not a
+physical-presence authorization step. Do not provision through an unknown USB
+adapter or on a shared/untrusted host.
+
+Remote configuration fetch/apply and touch-labelled feedback are the next
+firmware gates. The current worker reports a newer desired revision but does
+not apply it yet.
 
 ## Expected hardware
 
@@ -107,6 +134,7 @@ All dependencies are kept inside this directory.
 
 ```sh
 make firmware-unit
+make tools-test
 PLATFORMIO_CORE_DIR="$PWD/.platformio" ./.venv/bin/pio run
 PLATFORMIO_CORE_DIR="$PWD/.platformio" ./.venv/bin/pio run --target upload
 PLATFORMIO_CORE_DIR="$PWD/.platformio" ./.venv/bin/pio device monitor

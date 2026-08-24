@@ -3,6 +3,11 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef ARDUINO_ARCH_ESP32
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+#endif
+
 #include "presence_types.h"
 
 enum class TelemetryKind : uint8_t {
@@ -50,15 +55,22 @@ class TelemetryQueue {
   static constexpr size_t kReservedTransitionSlots = 8;
 
   QueuePushResult push(const TelemetryRecord& record);
-  const TelemetryRecord* front() const;
-  bool pop();
+  bool peek(TelemetryRecord& output) const;
+  size_t copyPrefix(TelemetryRecord* output, size_t outputCapacity) const;
+  bool commitPrefix(const TelemetryRecord* expected, size_t count);
 
-  size_t size() const { return size_; }
+  size_t size() const;
   constexpr size_t capacity() const { return kCapacity; }
-  uint32_t droppedSamples() const { return droppedSamples_; }
-  uint32_t droppedCritical() const { return droppedCritical_; }
+  uint32_t droppedSamples() const;
+  uint32_t droppedCritical() const;
 
  private:
+  void lock() const;
+  void unlock() const;
+
+#ifdef ARDUINO_ARCH_ESP32
+  mutable portMUX_TYPE mutex_ = portMUX_INITIALIZER_UNLOCKED;
+#endif
   TelemetryRecord records_[kCapacity] = {};
   size_t head_ = 0;
   size_t size_ = 0;
