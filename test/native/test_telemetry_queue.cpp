@@ -71,10 +71,21 @@ int main() {
   assert(front.seq == 3000);
 
   TelemetryRecord wrong = front;
-  wrong.seq = 3001;
+  wrong.appliedConfigRevision = 1;
   assert(!queue.commitPrefix(&wrong, 1));
   assert(queue.size() == 1);
   assert(queue.commitPrefix(&front, 1));
+
+  TelemetryRecord revisions[4] = {sample(4000), sample(4001), sample(4002),
+                                  sample(4003)};
+  revisions[0].appliedConfigRevision = 7;
+  revisions[1].appliedConfigRevision = 7;
+  revisions[2].appliedConfigRevision = 8;
+  revisions[3].appliedConfigRevision = 8;
+  assert(contiguousRevisionPrefix(revisions, 4) == 2);
+  assert(contiguousRevisionPrefix(revisions + 2, 2) == 2);
+  assert(contiguousRevisionPrefix(nullptr, 4) == 0);
+  assert(contiguousRevisionPrefix(revisions, 0) == 0);
 
   assert(std::strcmp(presenceStateWireName(PresenceState::kPresent),
                      "present") == 0);

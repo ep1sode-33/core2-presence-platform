@@ -79,6 +79,50 @@ def test_same_batch_id_with_different_body_conflicts(
     assert client.post(endpoint, json=changed).status_code == 409
 
 
+def test_ingest_rejects_unissued_applied_config_revision(
+    client: TestClient, sample_batch: dict
+) -> None:
+    unissued = deepcopy(sample_batch)
+    unissued["applied_config_revision"] = 1
+
+    response = client.post(f"/v1/devices/{DEVICE}/batches", json=unissued)
+
+    assert response.status_code == 409
+    assert client.get(f"/v1/devices/{DEVICE}/latest").status_code == 404
+
+
+def test_ingest_accepts_issued_applied_config_revision(
+    client: TestClient, sample_batch: dict
+) -> None:
+    config_endpoint = f"/v1/devices/{DEVICE}/config"
+    initial = client.get(config_endpoint)
+    assert initial.status_code == 200
+
+    issued = client.put(
+        config_endpoint,
+        json={
+            "base_revision": 0,
+            "created_by": "ingest-test",
+            "config": {
+                **initial.json()["config"],
+                "pir_hold_ms": 45000,
+            },
+        },
+    )
+    assert issued.status_code == 200, issued.text
+    assert issued.json()["revision"] == 1
+
+    revision_one_batch = deepcopy(sample_batch)
+    revision_one_batch["applied_config_revision"] = 1
+    response = client.post(f"/v1/devices/{DEVICE}/batches", json=revision_one_batch)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["stored"] == len(revision_one_batch["records"])
+    assert response.json()["duplicates"] == 0
+    assert response.json()["desired_config_revision"] == 1
+    assert client.get(f"/v1/devices/{DEVICE}/latest").status_code == 200
+
+
 def test_clock_anchor_backfills_earlier_records(
     client: TestClient, sample_batch: dict
 ) -> None:

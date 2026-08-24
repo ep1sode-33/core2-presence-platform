@@ -32,6 +32,7 @@ int main() {
   records[0].kind = TelemetryKind::kTransition;
   records[0].seq = 0;
   records[0].uptimeMs = 10;
+  records[0].appliedConfigRevision = 2;
   records[0].transition.hasFromState = false;
   records[0].transition.toState = PresenceState::kCalibrating;
   records[0].transition.reason = TransitionReason::kBoot;
@@ -39,6 +40,7 @@ int main() {
   records[1].kind = TelemetryKind::kSample;
   records[1].seq = 1;
   records[1].uptimeMs = 1000;
+  records[1].appliedConfigRevision = 2;
   records[1].sample.pir = true;
   records[1].sample.micRms = 12.5f;
   records[1].sample.micEnvelope = 10.25f;
@@ -77,6 +79,11 @@ int main() {
   assert(output.find("\"clock_anchor\":null") != std::string::npos);
 
   output.clear();
+  records[1].appliedConfigRevision = 3;
+  assert(!writeTelemetryBatchJson(validContext, records, 2, sink));
+  assert(output.empty());
+
+  records[1].appliedConfigRevision = 2;
   records[1].seq = records[0].seq;
   assert(!writeTelemetryBatchJson(validContext, records, 2, sink));
   assert(output.empty());

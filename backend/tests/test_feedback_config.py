@@ -87,6 +87,18 @@ def test_feedback_record_reference_must_exist_for_the_same_device(
         == 404
     )
 
+    transition_reference = {
+        **payload,
+        "feedback_id": "feedback-transition-0001",
+        "seq": 1,
+    }
+    assert (
+        client.post(
+            f"/v1/devices/{DEVICE}/feedback", json=transition_reference
+        ).status_code
+        == 404
+    )
+
 
 def test_touch_feedback_requires_acknowledged_telemetry(client: TestClient) -> None:
     payload = {
@@ -188,6 +200,25 @@ def test_config_uses_optimistic_revision(client: TestClient) -> None:
     stale = client.put(endpoint, json=payload)
     assert stale.status_code == 409
     assert client.get(endpoint).json()["revision"] == 1
+
+
+def test_config_rejects_batch_size_above_device_capability(
+    client: TestClient,
+) -> None:
+    endpoint = f"/v1/devices/{DEVICE}/config"
+    initial = client.get(endpoint).json()
+    payload = {
+        "base_revision": initial["revision"],
+        "created_by": "test",
+        "config": {
+            **initial["config"],
+            "upload_batch_size": 31,
+        },
+    }
+
+    response = client.put(endpoint, json=payload)
+
+    assert response.status_code == 422
 
 
 def test_optional_bearer_token(tmp_path) -> None:

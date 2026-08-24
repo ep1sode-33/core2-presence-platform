@@ -7,12 +7,16 @@
 #include <driver/i2s.h>
 #include <esp_system.h>
 
+#include "device_config.h"
+#include "device_config_mailbox.h"
+#include "device_config_storage.h"
 #include "device_settings.h"
 #include "presence_types.h"
 #include "provisioning_protocol.h"
 #include "runtime_identity.h"
 #include "telemetry.h"
 #include "telemetry_uploader.h"
+#include "touch_feedback_queue.h"
 
 namespace {
 
@@ -21,15 +25,8 @@ constexpr gpio_num_t kPirPin = GPIO_NUM_36;
 
 constexpr uint64_t kCalibrationMs = 5000;
 constexpr uint64_t kBenchTestMs = 5 * 60 * 1000;
-constexpr uint64_t kMinimumOnMs = 10000;
-constexpr uint64_t kPirHoldMs = 30000;
-constexpr uint64_t kSoundHoldMs = 12000;
-constexpr uint64_t kMaxSoundBridgeMs = 5 * 60 * 1000;
-constexpr uint64_t kCooldownMs = 5000;
-constexpr uint64_t kTouchWakeMs = 15000;
 constexpr uint64_t kDisplayIntervalMs = 150;
 constexpr uint64_t kSerialIntervalMs = 250;
-constexpr uint64_t kTelemetryIntervalMs = 1000;
 constexpr uint64_t kProvisioningChallengeLifetimeMs = 2 * 60 * 1000;
 constexpr uint64_t kProvisioningRestartDelayMs = 750;
 constexpr size_t kProvisioningLineCapacity = 768;
@@ -47,6 +44,9 @@ int16_t micSamples[kMicSamples] = {};
 M5Canvas displayFrame(&M5.Display);
 RuntimeIdentity runtimeIdentity;
 TelemetryQueue telemetryQueue;
+TouchFeedbackQueue touchFeedbackQueue;
+DeviceConfigMailbox configMailbox;
+PresenceConfig activeConfig = defaultPresenceConfig();
 
 PresenceState state = PresenceState::kCalibrating;
 uint64_t bootMs = 0;
@@ -65,7 +65,6 @@ float micEnvelope = 0.0f;
 int16_t micMin = 0;
 int16_t micMax = 0;
 float noiseFloor = 100.0f;
-float soundFactor = 1.12f;
 float soundThreshold = 300.0f;
 bool pirHigh = false;
 bool previousPirHigh = false;
@@ -284,6 +283,7 @@ void enqueueTransition(bool hasFromState, PresenceState fromState,
   record.kind = TelemetryKind::kTransition;
   record.seq = nextTelemetrySeq++;
   record.uptimeMs = now;
+  record.appliedConfigRevision = activeConfig.revision;
   record.transition.hasFromState = hasFromState;
   record.transition.fromState = fromState;
   record.transition.toState = toState;
@@ -296,16 +296,12 @@ void enqueueTransition(bool hasFromState, PresenceState fromState,
   }
 }
 
-void enqueueSample(uint64_t now) {
-  if (now - lastTelemetrySampleMs < kTelemetryIntervalMs) {
-    return;
-  }
-  lastTelemetrySampleMs = now;
-
+TelemetryRecord captureSampleRecord(uint64_t now, uint64_t seq) {
   TelemetryRecord record;
   record.kind = TelemetryKind::kSample;
-  record.seq = nextTelemetrySeq++;
+  record.seq = seq;
   record.uptimeMs = now;
+  record.appliedConfigRevision = activeConfig.revision;
   record.sample.pir = pirHigh;
   record.sample.micRms = micRms;
   record.sample.micEnvelope = micEnvelope;
@@ -316,6 +312,16 @@ void enqueueSample(uint64_t now) {
   record.sample.soundActive = soundActive;
   record.sample.state = state;
   record.sample.brightness = currentBrightness;
+  return record;
+}
+
+void enqueueSample(uint64_t now) {
+  if (now - lastTelemetrySampleMs < activeConfig.telemetryIntervalMs) {
+    return;
+  }
+  lastTelemetrySampleMs = now;
+
+  const TelemetryRecord record = captureSampleRecord(now, nextTelemetrySeq++);
 
   const QueuePushResult result = telemetryQueue.push(record);
   if (result == QueuePushResult::kSampleDropped &&
@@ -323,6 +329,36 @@ void enqueueSample(uint64_t now) {
     Serial.printf("EVENT,telemetry_sample_drop,%" PRIu64 ",%u\n", now,
                   telemetryQueue.droppedSamples());
   }
+}
+
+void applyPendingConfig(uint64_t now) {
+  PresenceConfig pending = {};
+  if (!configMailbox.take(&pending)) {
+    return;
+  }
+  if (validatePresenceConfig(pending) !=
+          PresenceConfigValidationError::kNone ||
+      validatePresenceConfigDeviceCapabilities(pending) !=
+          PresenceConfigCapabilityError::kNone) {
+    Serial.println("EVENT,config,main_rejected_invalid");
+    return;
+  }
+  if (pending.revision <= activeConfig.revision) {
+    configMailbox.acknowledgeAppliedRevision(activeConfig.revision);
+    Serial.printf("EVENT,config,main_ignored_stale,%" PRIu64 ",%" PRIu64
+                  "\n",
+                  pending.revision, activeConfig.revision);
+    return;
+  }
+
+  const uint64_t previousRevision = activeConfig.revision;
+  activeConfig = pending;
+  enqueueTransition(true, state, state, TransitionReason::kConfigChange, now);
+  // Publish the acknowledgement only after the revision boundary record is in
+  // the telemetry queue. The worker cannot switch batching semantics earlier.
+  configMailbox.acknowledgeAppliedRevision(activeConfig.revision);
+  Serial.printf("EVENT,config,main_applied,%" PRIu64 ",%" PRIu64 "\n",
+                previousRevision, activeConfig.revision);
 }
 
 void enterState(PresenceState next, TransitionReason reason, uint64_t now) {
@@ -461,38 +497,81 @@ void sampleMicrophone(uint64_t now) {
       noiseFloor += (micEnvelope - noiseFloor) * 0.0005f;
     }
 
-    soundThreshold = fmaxf(noiseFloor * soundFactor, noiseFloor + 350.0f);
+    soundThreshold =
+        fmaxf(noiseFloor * activeConfig.soundFactor, noiseFloor + 350.0f);
     const float releaseThreshold =
-        fmaxf(noiseFloor * (1.0f + (soundFactor - 1.0f) * 0.55f),
+        fmaxf(noiseFloor *
+                  (1.0f + (activeConfig.soundFactor - 1.0f) * 0.55f),
               noiseFloor + 175.0f);
     soundActive = soundActive ? micEnvelope > releaseThreshold
                               : micEnvelope > soundThreshold;
     if (soundActive && state != PresenceState::kIdle &&
-        now - lastPirMs < kMaxSoundBridgeMs) {
+        now - lastPirMs < activeConfig.maxSoundBridgeMs) {
       lastSoundMs = now;
     }
   }
 }
 
-void readTouch(uint64_t now) {
+bool enqueueTouchCorrection(TouchPresenceChoice choice, uint64_t now) {
+  // Reserve this sequence exactly once even if the bounded queue is full. A
+  // failed correction is observable as a gap, never as a reused identity.
+  const TelemetryRecord preTouchSample =
+      captureSampleRecord(now, nextTelemetrySeq++);
+  TouchFeedbackEvidence evidence = {};
+  if (!buildTouchFeedbackEvidence(runtimeIdentity.bootId, preTouchSample,
+                                  choice, evidence)) {
+    Serial.printf("EVENT,touch_feedback,rejected_build,%" PRIu64 "\n",
+                  preTouchSample.seq);
+    return false;
+  }
+
+  const TouchFeedbackQueuePushResult result = touchFeedbackQueue.push(evidence);
+  if (result != TouchFeedbackQueuePushResult::kStored) {
+    Serial.printf("EVENT,touch_feedback,rejected_queue,%" PRIu64 ",%u\n",
+                  preTouchSample.seq, static_cast<unsigned>(result));
+    return false;
+  }
+  Serial.printf("EVENT,touch_feedback,queued,%" PRIu64 ",%s\n",
+                preTouchSample.seq,
+                choice == TouchPresenceChoice::kPersonWasPresent ? "present"
+                                                                  : "absent");
+  return true;
+}
+
+bool readTouch(uint64_t now) {
   const auto touch = M5.Touch.getDetail();
   if (!touch.wasClicked()) {
-    return;
+    return false;
   }
 
-  // Bottom left/right tunes microphone sensitivity. A touch elsewhere wakes
-  // the screen so diagnostics remain accessible after IDLE turns it off.
-  if (touch.y > 190 && touch.x < 105) {
-    soundFactor = fmaxf(1.05f, soundFactor - 0.02f);
-    Serial.printf("EVENT,sensitivity,%" PRIu64 ",%.2f\n", now, soundFactor);
-  } else if (touch.y > 190 && touch.x > 215) {
-    soundFactor = fminf(2.0f, soundFactor + 0.02f);
-    Serial.printf("EVENT,sensitivity,%" PRIu64 ",%.2f\n", now, soundFactor);
+  // The evidence pair snapshots the state before any touch-induced mutation.
+  // A full/invalid feedback queue therefore cannot alter the state machine.
+  if (touch.y >= 207 && touch.x < 105) {
+    if (!enqueueTouchCorrection(TouchPresenceChoice::kPersonWasPresent, now)) {
+      return false;
+    }
+    lastPirMs = now;
+    lastSoundMs = now;
+    enterState(PresenceState::kPresent, TransitionReason::kTouchWake, now);
+  } else if (touch.y >= 207 && touch.x >= 215) {
+    if (!enqueueTouchCorrection(TouchPresenceChoice::kRoomWasAbsent, now)) {
+      return false;
+    }
+    // ABSENT is a training label for the pre-touch observation, not a
+    // fabricated state transition. Preserve the live state and merely skip
+    // this iteration's automatic update so the evidence stays pre-touch.
+  } else {
+    // The center (and the rest of the diagnostic surface) remains a generic
+    // wake gesture and intentionally does not create correction feedback.
+    lastPirMs = now;
+    lastSoundMs = now;
+    enterState(PresenceState::kPresent, TransitionReason::kTouchWake, now);
   }
 
-  lastPirMs = now;
-  lastSoundMs = now;
-  enterState(PresenceState::kPresent, TransitionReason::kTouchWake, now);
+  // Do not let the normal state update immediately overwrite an explicit
+  // touch result in this same loop iteration.
+  previousPirHigh = pirHigh;
+  return true;
 }
 
 void updatePresenceState(uint64_t now) {
@@ -538,9 +617,10 @@ void updatePresenceState(uint64_t now) {
       break;
 
     case PresenceState::kPresent: {
-      const bool minimumOnElapsed = now - stateSinceMs >= kMinimumOnMs;
-      const bool pirQuiet = now - lastPirMs >= kPirHoldMs;
-      const bool soundQuiet = now - lastSoundMs >= kSoundHoldMs;
+      const bool minimumOnElapsed =
+          now - stateSinceMs >= activeConfig.minimumOnMs;
+      const bool pirQuiet = now - lastPirMs >= activeConfig.pirHoldMs;
+      const bool soundQuiet = now - lastSoundMs >= activeConfig.soundHoldMs;
       if (minimumOnElapsed && pirQuiet && soundQuiet) {
         enterState(PresenceState::kCooldown, TransitionReason::kQuietTimeout,
                    now);
@@ -550,7 +630,7 @@ void updatePresenceState(uint64_t now) {
 
     case PresenceState::kCooldown:
       const bool soundCanBridge =
-          soundActive && now - lastPirMs < kMaxSoundBridgeMs;
+          soundActive && now - lastPirMs < activeConfig.maxSoundBridgeMs;
       if (pirHigh || soundCanBridge) {
         if (pirHigh) {
           lastPirMs = now;
@@ -562,7 +642,7 @@ void updatePresenceState(uint64_t now) {
                    pirHigh ? TransitionReason::kPirMotion
                            : TransitionReason::kSoundBridge,
                    now);
-      } else if (now - stateSinceMs >= kCooldownMs) {
+      } else if (now - stateSinceMs >= activeConfig.cooldownMs) {
         enterState(PresenceState::kIdle, TransitionReason::kCooldownTimeout,
                    now);
       }
@@ -609,6 +689,17 @@ void drawDisplayFallback(uint64_t now) {
     M5.Display.drawString("Core2 Presence Lab", 10, 10);
     M5.Display.setTextSize(1);
     M5.Display.drawString("Low-memory partial update mode", 10, 38);
+    M5.Display.drawRect(0, 207, 105, 33, TFT_DARKGREY);
+    M5.Display.drawRect(105, 207, 110, 33, TFT_DARKGREY);
+    M5.Display.drawRect(215, 207, 105, 33, TFT_DARKGREY);
+    M5.Display.setTextDatum(middle_center);
+    M5.Display.setTextColor(TFT_GREEN, TFT_YELLOW);
+    M5.Display.drawString("PRESENT", 52, 223);
+    M5.Display.setTextColor(TFT_BLACK, TFT_YELLOW);
+    M5.Display.drawString("WAKE", 160, 223);
+    M5.Display.setTextColor(TFT_RED, TFT_YELLOW);
+    M5.Display.drawString("ABSENT", 267, 223);
+    M5.Display.setTextDatum(top_left);
     fallbackUiInitialized = true;
   }
 
@@ -706,13 +797,19 @@ void drawDisplay(uint64_t now) {
 
   displayFrame.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   displayFrame.setCursor(10, 184);
-  displayFrame.printf("Mic sensitivity factor: %.1fx", soundFactor);
+  displayFrame.printf("Config r%" PRIu64 "  mic %.2fx", activeConfig.revision,
+                      activeConfig.soundFactor);
 
   displayFrame.drawRect(0, 207, 105, 33, TFT_DARKGREY);
+  displayFrame.drawRect(105, 207, 110, 33, TFT_DARKGREY);
   displayFrame.drawRect(215, 207, 105, 33, TFT_DARKGREY);
   displayFrame.setTextDatum(middle_center);
-  displayFrame.drawString("MORE SENSITIVE", 52, 223);
-  displayFrame.drawString("LESS SENSITIVE", 267, 223);
+  displayFrame.setTextColor(TFT_GREEN, TFT_BLACK);
+  displayFrame.drawString("PRESENT", 52, 223);
+  displayFrame.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  displayFrame.drawString("WAKE", 160, 223);
+  displayFrame.setTextColor(TFT_RED, TFT_BLACK);
+  displayFrame.drawString("ABSENT", 267, 223);
   displayFrame.setTextDatum(top_left);
 
   if (provisioningChallengeActive) {
@@ -783,20 +880,39 @@ void setup() {
   forceCore2DisplayPower();
   micBeginOk = beginRawMicrophone();
 
+  runtimeIdentity = createRuntimeIdentity();
+
+  PresenceConfig storedConfig = defaultPresenceConfig();
+  const DeviceConfigStorageResult configStorageResult =
+      loadStoredDeviceConfig(&storedConfig);
+  if (configStorageResult == DeviceConfigStorageResult::kOk) {
+    activeConfig = storedConfig;
+  } else {
+    activeConfig = defaultPresenceConfig();
+  }
+  configMailbox.acknowledgeAppliedRevision(activeConfig.revision);
+
+  // NVS access is outside the sensor calibration window. The monotonic boot
+  // baseline begins only after the configuration for this run is known.
   bootMs = monotonicMillis();
   stateSinceMs = bootMs;
   lastPirMs = bootMs;
   lastSoundMs = bootMs;
   lastTelemetrySampleMs = bootMs;
-  runtimeIdentity = createRuntimeIdentity();
+
+  // The first telemetry record must describe the configuration that was
+  // actually loaded for this boot, never an earlier compile-time placeholder.
   enqueueTransition(false, PresenceState::kCalibrating,
                     PresenceState::kCalibrating, TransitionReason::kBoot,
                     bootMs);
 
-  Serial.println("Core2 Presence Lab v0.3");
+  Serial.println("Core2 Presence Lab v0.4");
   Serial.printf("IDENTITY,device_id,%s,boot_id,%s,valid,%d\n",
                 runtimeIdentity.deviceId, runtimeIdentity.bootId,
                 runtimeIdentity.deviceIdValid ? 1 : 0);
+  Serial.printf("CONFIG,revision,%" PRIu64 ",storage_status,%u\n",
+                activeConfig.revision,
+                static_cast<unsigned>(configStorageResult));
   Serial.printf(
       "DEVICE,pir_gpio,%d,tmos_0x5a,%d,mic_started,%d,mic_data,34,"
       "mic_clock,0,driver,raw_i2s_pdm,base_imu,%d,board,%d,pmic,%d,"
@@ -817,6 +933,7 @@ void setup() {
   deviceSettingsConfigured = settingsResult == DeviceSettingsStorageResult::kOk;
   TelemetryUploaderSettings uploaderSettings;
   uploaderSettings.configured = deviceSettingsConfigured;
+  uploaderSettings.initialConfig = activeConfig;
   uploaderSettings.startAfterUptimeMs = bootMs + kCalibrationMs + 1000;
   if (deviceSettingsConfigured) {
     std::memcpy(uploaderSettings.wifiSsid, loadedSettings.ssid,
@@ -829,7 +946,8 @@ void setup() {
                 sizeof(loadedSettings.token));
   }
   const bool uploaderStarted =
-      startTelemetryUploader(runtimeIdentity, uploaderSettings, telemetryQueue);
+      startTelemetryUploader(runtimeIdentity, uploaderSettings, telemetryQueue,
+                             configMailbox, touchFeedbackQueue);
   securelyClear(&loadedSettings, sizeof(loadedSettings));
   securelyClear(&uploaderSettings, sizeof(uploaderSettings));
   Serial.printf("NETWORK,configured,%d,uploader_started,%d,settings_status,%u\n",
@@ -839,12 +957,15 @@ void setup() {
 
 void loop() {
   const uint64_t now = monotonicMillis();
+  applyPendingConfig(now);
   M5.update();
 
   pirHigh = digitalRead(kPirPin) == HIGH;
   sampleMicrophone(now);
-  readTouch(now);
-  updatePresenceState(now);
+  const bool touchChangedState = readTouch(now);
+  if (!touchChangedState) {
+    updatePresenceState(now);
+  }
   drawDisplay(now);
   printSerial(now);
   enqueueSample(now);

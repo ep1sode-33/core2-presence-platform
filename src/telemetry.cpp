@@ -1,5 +1,18 @@
 #include "telemetry.h"
 
+size_t contiguousRevisionPrefix(const TelemetryRecord* records, size_t count) {
+  if (records == nullptr || count == 0) {
+    return 0;
+  }
+  const uint64_t revision = records[0].appliedConfigRevision;
+  size_t prefix = 1;
+  while (prefix < count &&
+         records[prefix].appliedConfigRevision == revision) {
+    ++prefix;
+  }
+  return prefix;
+}
+
 void TelemetryQueue::lock() const {
 #ifdef ARDUINO_ARCH_ESP32
   portENTER_CRITICAL(&mutex_);
@@ -74,7 +87,9 @@ bool TelemetryQueue::commitPrefix(const TelemetryRecord* expected,
     const TelemetryRecord& queued = records_[(head_ + index) % kCapacity];
     if (queued.kind != expected[index].kind ||
         queued.seq != expected[index].seq ||
-        queued.uptimeMs != expected[index].uptimeMs) {
+        queued.uptimeMs != expected[index].uptimeMs ||
+        queued.appliedConfigRevision !=
+            expected[index].appliedConfigRevision) {
       unlock();
       return false;
     }

@@ -2,8 +2,11 @@
 
 #include <cstdint>
 
+#include "device_config.h"
+#include "device_config_mailbox.h"
 #include "runtime_identity.h"
 #include "telemetry.h"
+#include "touch_feedback_queue.h"
 
 struct TelemetryUploaderSettings {
   bool configured = false;
@@ -11,14 +14,16 @@ struct TelemetryUploaderSettings {
   char wifiPassword[64] = {};
   char serverBaseUrl[129] = {};
   char apiToken[257] = {};
-  uint64_t appliedConfigRevision = 0;
+  PresenceConfig initialConfig = defaultPresenceConfig();
   uint64_t startAfterUptimeMs = 0;
-  uint16_t uploadBatchSize = 30;
 };
 
 // Starts one low-priority Core 0 worker. The settings and identity are copied;
-// the telemetry queue must remain alive for the lifetime of the firmware.
+// both queues and the config mailbox must remain alive for the firmware's
+// lifetime.
 // Invalid device identity is a hard failure: no envelope is written or sent.
 bool startTelemetryUploader(const RuntimeIdentity& identity,
                             const TelemetryUploaderSettings& settings,
-                            TelemetryQueue& queue);
+                            TelemetryQueue& queue,
+                            DeviceConfigMailbox& configMailbox,
+                            TouchFeedbackQueue& touchFeedbackQueue);

@@ -206,14 +206,17 @@ class FeedbackPage(StrictModel):
 
 
 class PresenceConfig(StrictModel):
-    minimum_on_ms: int = Field(default=10000, strict=True, ge=0, le=600000)
-    pir_hold_ms: int = Field(default=30000, strict=True, ge=1000, le=3600000)
-    sound_hold_ms: int = Field(default=12000, strict=True, ge=0, le=600000)
-    max_sound_bridge_ms: int = Field(default=300000, strict=True, ge=0, le=3600000)
-    cooldown_ms: int = Field(default=5000, strict=True, ge=0, le=600000)
-    sound_factor: float = Field(default=1.12, strict=True, ge=1.0, le=4.0)
-    telemetry_interval_ms: int = Field(default=1000, strict=True, ge=250, le=60000)
-    upload_batch_size: int = Field(default=30, strict=True, ge=1, le=256)
+    minimum_on_ms: int = Field(strict=True, ge=0, le=600000)
+    pir_hold_ms: int = Field(strict=True, ge=1000, le=3600000)
+    sound_hold_ms: int = Field(strict=True, ge=0, le=600000)
+    max_sound_bridge_ms: int = Field(strict=True, ge=0, le=3600000)
+    cooldown_ms: int = Field(strict=True, ge=0, le=600000)
+    sound_factor: float = Field(strict=True, ge=1.0, le=4.0)
+    telemetry_interval_ms: int = Field(strict=True, ge=250, le=60000)
+    # The current Core2 uploader deliberately serializes at most 30 records
+    # from a fixed-size worker buffer. Keep the server contract at the same
+    # capability ceiling so a device never has to silently clamp a revision.
+    upload_batch_size: int = Field(strict=True, ge=1, le=30)
 
 
 class ConfigPut(StrictModel):

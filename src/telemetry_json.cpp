@@ -61,14 +61,16 @@ bool validContext(const TelemetryBatchContext& context) {
   return true;
 }
 
-bool validRecords(const TelemetryRecord* records, size_t recordCount) {
+bool validRecords(const TelemetryRecord* records, size_t recordCount,
+                  uint64_t appliedConfigRevision) {
   if (records == nullptr || recordCount == 0 || recordCount > 256) {
     return false;
   }
 
   for (size_t index = 0; index < recordCount; ++index) {
     const TelemetryRecord& record = records[index];
-    if (record.seq > kMaxSigned64 || record.uptimeMs > kMaxSigned64) {
+    if (record.seq > kMaxSigned64 || record.uptimeMs > kMaxSigned64 ||
+        record.appliedConfigRevision != appliedConfigRevision) {
       return false;
     }
     for (size_t previous = 0; previous < index; ++previous) {
@@ -238,7 +240,7 @@ bool writeTelemetryBatchJson(const TelemetryBatchContext& context,
                              size_t recordCount,
                              const TelemetryJsonSink& sink) {
   if (sink.write == nullptr || !validContext(context) ||
-      !validRecords(records, recordCount)) {
+      !validRecords(records, recordCount, context.appliedConfigRevision)) {
     return false;
   }
 

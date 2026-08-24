@@ -57,10 +57,11 @@ existing record identity is an HTTP 409 rather than a silent overwrite.
   reconstructed event time without accepting dangling calibration labels.
 - A feedback envelope has one durable, immutable `feedback_id` and payload.
   Lost responses replay the same envelope. It is removed only after HTTP 200
-  with a matching response `feedback_id`; 401, 404, 409, and 422 move it to the
-  same bounded diagnostic/dead-letter path as a bad telemetry envelope. A 404
-  indicates an uploader ordering or restored-state fault because normal flow
-  waits for the referenced telemetry ACK first.
+  with a matching response `feedback_id`. A 401 keeps the immutable envelope
+  and halts all uploads until credentials are corrected. Feedback-specific 404,
+  409, and 422 responses move that envelope to the bounded diagnostic/dead-letter
+  path. A feedback 404 indicates an uploader ordering or restored-state fault
+  because normal flow waits for the referenced telemetry ACK first.
 
 ### Firmware integration gates
 
@@ -77,6 +78,14 @@ existing record identity is an HTTP 409 rather than a silent overwrite.
   Thus the gesture cannot contaminate its own human label or produce a 404.
 - Applying a new configuration closes the current batch. One envelope never
   mixes records produced under different `applied_config_revision` values.
+- A device never silently rolls back a durably applied configuration. If the
+  server reports a lower revision, or different settings under the same
+  revision, uploads halt with immutable spools preserved for operator recovery;
+  otherwise valid data is not converted into a stream of revision-conflict
+  dead letters. Accordingly, the first telemetry HTTP 409 holds the exact
+  envelope and forces a configuration revalidation. Only the same batch's
+  repeated 409 after a consistent server revision is confirmed is treated as a
+  payload conflict.
 - Payload-specific permanent-error envelopes move to a bounded
   dead-letter/diagnostic queue so one HTTP 409 or 422 cannot block later valid
   telemetry. Credential-wide 401 and endpoint-wide 404 errors halt instead of

@@ -69,9 +69,20 @@ trusted. The challenge prevents stale or crossed commands, but it is not a
 physical-presence authorization step. Do not provision through an unknown USB
 adapter or on a shared/untrusted host.
 
-Remote configuration fetch/apply and touch-labelled feedback are the next
-firmware gates. The current worker reports a newer desired revision but does
-not apply it yet.
+The worker also fetches revisioned presence settings from the backend. A newer
+revision is validated against the Core2's fixed capacities, written to an
+atomic two-slot NVS record, and handed to the hardware loop through a bounded
+mailbox. The loop applies the complete snapshot at one boundary and stamps all
+subsequent telemetry with that revision; the uploader never mixes revisions in
+one batch.
+
+The two bottom touch targets are human labels: `PRESENT` snapshots an
+immediate pre-touch sample as `present`, while `ABSENT` snapshots it as
+`absent`. The sample and label enter one indivisible RAM item, are persisted as
+one checksummed LittleFS bundle, and survive restart without changing identity.
+The worker acknowledges the referenced telemetry sample before it posts the
+feedback, preventing dangling labels. Touch coordinates and raw microphone
+audio are never uploaded.
 
 ## Expected hardware
 
@@ -95,8 +106,8 @@ remapping it breaks LCD backlight control.
 - After both sensors are quiet: dim for 5 seconds, then turn the backlight off.
 - Sound may bridge stationary periods for at most 5 minutes after the latest
   PIR evidence, so a television or fan cannot keep the display on forever.
-- Touch anywhere to wake the diagnostics screen.
-- Touch the lower-left or lower-right areas to tune microphone sensitivity.
+- Touch the center area to wake the diagnostics screen without adding a label.
+- Touch `PRESENT` or `ABSENT` to record a pre-touch presence correction.
 
 No audio is stored or transmitted. The microphone samples are reduced to a
 short-window RMS value and smoothed envelope in memory. Sound detection uses a

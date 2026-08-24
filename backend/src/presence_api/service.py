@@ -261,6 +261,15 @@ class PresenceService:
                 )
 
             try:
+                if batch.applied_config_revision > 0:
+                    applied_revision = session.get(
+                        ConfigRevision,
+                        (device_id, batch.applied_config_revision),
+                    )
+                    if applied_revision is None:
+                        raise ConflictError(
+                            "applied_config_revision does not exist for device"
+                        )
                 device = self._ensure_device(
                     session,
                     device_id,
@@ -601,6 +610,10 @@ class PresenceService:
                         raise NotFoundError(
                             "referenced telemetry record was not found for device"
                         )
+                    if referenced_record.kind != "sample":
+                        raise NotFoundError(
+                            "referenced telemetry sample was not found for device"
+                        )
                     occurred_at_ms = referenced_record.observed_at_ms
                     occurred_uptime_ms = referenced_record.uptime_ms
                     time_quality = referenced_record.time_quality
@@ -693,7 +706,16 @@ class PresenceService:
                     revision=0,
                     created_at_ms=None,
                     created_by=None,
-                    config=PresenceConfig(),
+                    config=PresenceConfig(
+                        minimum_on_ms=10000,
+                        pir_hold_ms=30000,
+                        sound_hold_ms=12000,
+                        max_sound_bridge_ms=300000,
+                        cooldown_ms=5000,
+                        sound_factor=1.12,
+                        telemetry_interval_ms=1000,
+                        upload_batch_size=30,
+                    ),
                 )
             return ConfigResponse(
                 device_id=device_id,

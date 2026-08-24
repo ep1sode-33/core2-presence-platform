@@ -34,6 +34,38 @@ firmware-unit:
 		src/provisioning_protocol.cpp \
 		-o $(NATIVE_BUILD)/provisioning_protocol_test
 	$(NATIVE_BUILD)/provisioning_protocol_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_device_config.cpp src/device_config.cpp \
+		-o $(NATIVE_BUILD)/device_config_test
+	$(NATIVE_BUILD)/device_config_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_device_config_storage.cpp \
+		src/device_config_storage.cpp src/device_config.cpp \
+		-o $(NATIVE_BUILD)/device_config_storage_test
+	$(NATIVE_BUILD)/device_config_storage_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_device_config_mailbox.cpp \
+		src/device_config_mailbox.cpp src/device_config.cpp \
+		-o $(NATIVE_BUILD)/device_config_mailbox_test
+	$(NATIVE_BUILD)/device_config_mailbox_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_feedback_protocol.cpp src/feedback_protocol.cpp \
+		-o $(NATIVE_BUILD)/feedback_protocol_test
+	$(NATIVE_BUILD)/feedback_protocol_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_feedback_spool_name.cpp \
+		src/feedback_spool_name.cpp src/feedback_protocol.cpp \
+		-o $(NATIVE_BUILD)/feedback_spool_name_test
+	$(NATIVE_BUILD)/feedback_spool_name_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_touch_feedback_queue.cpp \
+		src/touch_feedback_queue.cpp src/feedback_protocol.cpp \
+		-o $(NATIVE_BUILD)/touch_feedback_queue_test
+	$(NATIVE_BUILD)/touch_feedback_queue_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_feedback_bundle.cpp src/feedback_bundle.cpp \
+		-o $(NATIVE_BUILD)/feedback_bundle_test
+	$(NATIVE_BUILD)/feedback_bundle_test
 
 tools-test:
 	$(PYTHON) -m unittest discover -s tools/tests -v

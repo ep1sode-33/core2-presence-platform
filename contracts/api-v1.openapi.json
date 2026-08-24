@@ -1072,61 +1072,63 @@
             "type": "integer",
             "maximum": 600000.0,
             "minimum": 0.0,
-            "title": "Minimum On Ms",
-            "default": 10000
+            "title": "Minimum On Ms"
           },
           "pir_hold_ms": {
             "type": "integer",
             "maximum": 3600000.0,
             "minimum": 1000.0,
-            "title": "Pir Hold Ms",
-            "default": 30000
+            "title": "Pir Hold Ms"
           },
           "sound_hold_ms": {
             "type": "integer",
             "maximum": 600000.0,
             "minimum": 0.0,
-            "title": "Sound Hold Ms",
-            "default": 12000
+            "title": "Sound Hold Ms"
           },
           "max_sound_bridge_ms": {
             "type": "integer",
             "maximum": 3600000.0,
             "minimum": 0.0,
-            "title": "Max Sound Bridge Ms",
-            "default": 300000
+            "title": "Max Sound Bridge Ms"
           },
           "cooldown_ms": {
             "type": "integer",
             "maximum": 600000.0,
             "minimum": 0.0,
-            "title": "Cooldown Ms",
-            "default": 5000
+            "title": "Cooldown Ms"
           },
           "sound_factor": {
             "type": "number",
             "maximum": 4.0,
             "minimum": 1.0,
-            "title": "Sound Factor",
-            "default": 1.12
+            "title": "Sound Factor"
           },
           "telemetry_interval_ms": {
             "type": "integer",
             "maximum": 60000.0,
             "minimum": 250.0,
-            "title": "Telemetry Interval Ms",
-            "default": 1000
+            "title": "Telemetry Interval Ms"
           },
           "upload_batch_size": {
             "type": "integer",
-            "maximum": 256.0,
+            "maximum": 30.0,
             "minimum": 1.0,
-            "title": "Upload Batch Size",
-            "default": 30
+            "title": "Upload Batch Size"
           }
         },
         "additionalProperties": false,
         "type": "object",
+        "required": [
+          "minimum_on_ms",
+          "pir_hold_ms",
+          "sound_hold_ms",
+          "max_sound_bridge_ms",
+          "cooldown_ms",
+          "sound_factor",
+          "telemetry_interval_ms",
+          "upload_batch_size"
+        ],
         "title": "PresenceConfig"
       },
       "PresenceState": {

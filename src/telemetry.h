@@ -39,9 +39,16 @@ struct TelemetryRecord {
   TelemetryKind kind = TelemetryKind::kSample;
   uint64_t seq = 0;
   uint64_t uptimeMs = 0;
+  // Internal envelope metadata. It is serialized once at batch level, and the
+  // uploader must never combine records carrying different revisions.
+  uint64_t appliedConfigRevision = 0;
   SampleTelemetry sample = {};
   TransitionTelemetry transition = {};
 };
+
+// Returns the leading record count that can share one batch-level applied
+// configuration revision.
+size_t contiguousRevisionPrefix(const TelemetryRecord* records, size_t count);
 
 enum class QueuePushResult : uint8_t {
   kStored,
