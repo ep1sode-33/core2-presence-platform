@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://m5-presence.local/schemas/telemetry-v1.schema.json",
+  "$comment": "Generated from presence_api.schemas.TelemetryBatch. The executable contract also enforces every rule in x-semantic-constraints.",
+  "x-semantic-constraints": [
+    "records[*].seq values must be unique within one batch",
+    "each sample mic_min must be less than or equal to mic_max"
+  ],
+  "$defs": {
+    "ClockAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "utc_ms": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Utc Ms",
+          "type": "integer"
+        },
+        "uptime_ms": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Uptime Ms",
+          "type": "integer"
+        },
+        "source": {
+          "$ref": "#/$defs/ClockSource"
+        }
+      },
+      "required": [
+        "utc_ms",
+        "uptime_ms",
+        "source"
+      ],
+      "title": "ClockAnchor",
+      "type": "object"
+    },
+    "ClockSource": {
+      "enum": [
+        "sntp",
+        "rtc"
+      ],
+      "title": "ClockSource",
+      "type": "string"
+    },
+    "PresenceState": {
+      "enum": [
+        "calibrating",
+        "idle",
+        "present",
+        "cooldown"
+      ],
+      "title": "PresenceState",
+      "type": "string"
+    },
+    "SampleRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "sample",
+          "title": "Kind",
+          "type": "string"
+        },
+        "uptime_ms": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Uptime Ms",
+          "type": "integer"
+        },
+        "pir": {
+          "title": "Pir",
+          "type": "boolean"
+        },
+        "mic_rms": {
+          "minimum": 0,
+          "title": "Mic Rms",
+          "type": "number"
+        },
+        "mic_envelope": {
+          "minimum": 0,
+          "title": "Mic Envelope",
+          "type": "number"
+        },
+        "mic_min": {
+          "maximum": 32767,
+          "minimum": -32768,
+          "title": "Mic Min",
+          "type": "integer"
+        },
+        "mic_max": {
+          "maximum": 32767,
+          "minimum": -32768,
+          "title": "Mic Max",
+          "type": "integer"
+        },
+        "noise_floor": {
+          "minimum": 0,
+          "title": "Noise Floor",
+          "type": "number"
+        },
+        "sound_threshold": {
+          "minimum": 0,
+          "title": "Sound Threshold",
+          "type": "number"
+        },
+        "sound_active": {
+          "title": "Sound Active",
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/PresenceState"
+        },
+        "brightness": {
+          "maximum": 255,
+          "minimum": 0,
+          "title": "Brightness",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seq",
+        "kind",
+        "uptime_ms",
+        "pir",
+        "mic_rms",
+        "mic_envelope",
+        "mic_min",
+        "mic_max",
+        "noise_floor",
+        "sound_threshold",
+        "sound_active",
+        "state",
+        "brightness"
+      ],
+      "title": "SampleRecord",
+      "type": "object"
+    },
+    "TransitionReason": {
+      "enum": [
+        "boot",
+        "calibration_complete",
+        "pir_motion",
+        "sound_bridge",
+        "quiet_timeout",
+        "cooldown_timeout",
+        "touch_wake",
+        "bench_override",
+        "config_change",
+        "unknown"
+      ],
+      "title": "TransitionReason",
+      "type": "string"
+    },
+    "TransitionRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transition",
+          "title": "Kind",
+          "type": "string"
+        },
+        "uptime_ms": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Uptime Ms",
+          "type": "integer"
+        },
+        "from_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PresenceState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "to_state": {
+          "$ref": "#/$defs/PresenceState"
+        },
+        "reason": {
+          "$ref": "#/$defs/TransitionReason"
+        }
+      },
+      "required": [
+        "seq",
+        "kind",
+        "uptime_ms",
+        "from_state",
+        "to_state",
+        "reason"
+      ],
+      "title": "TransitionRecord",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "batch_id": {
+      "maxLength": 96,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "boot_id": {
+      "maxLength": 64,
+      "minLength": 16,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Boot Id",
+      "type": "string"
+    },
+    "firmware_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Firmware Version",
+      "type": "string"
+    },
+    "applied_config_revision": {
+      "maximum": 9223372036854775807,
+      "minimum": 0,
+      "title": "Applied Config Revision",
+      "type": "integer"
+    },
+    "clock_anchor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ClockAnchor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "records": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "sample": "#/$defs/SampleRecord",
+            "transition": "#/$defs/TransitionRecord"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SampleRecord"
+          },
+          {
+            "$ref": "#/$defs/TransitionRecord"
+          }
+        ]
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Records",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "batch_id",
+    "boot_id",
+    "firmware_version",
+    "applied_config_revision",
+    "records"
+  ],
+  "title": "Core2 presence telemetry batch v1",
+  "type": "object"
+}

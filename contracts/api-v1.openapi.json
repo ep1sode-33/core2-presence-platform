@@ -1,0 +1,1659 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "M5 Presence API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/v1/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "operationId": "healthz_v1_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/batches": {
+      "post": {
+        "summary": "Ingest Batch",
+        "operationId": "ingest_batch_v1_devices__device_id__batches_post",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelemetryBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "409": {
+            "description": "Idempotency or clock-anchor conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/latest": {
+      "get": {
+        "summary": "Latest Sample",
+        "operationId": "latest_sample_v1_devices__device_id__latest_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SampleOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "description": "No sample exists for this device"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/samples": {
+      "get": {
+        "summary": "Samples",
+        "operationId": "samples_v1_devices__device_id__samples_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "start_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 9223372036854775807,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive lower bound on server receive time",
+              "title": "Start Ms"
+            },
+            "description": "Inclusive lower bound on server receive time"
+          },
+          {
+            "name": "end_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 9223372036854775807,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive upper bound on server receive time",
+              "title": "End Ms"
+            },
+            "description": "Inclusive upper bound on server receive time"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SamplePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "400": {
+            "description": "Invalid time window"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/transitions": {
+      "get": {
+        "summary": "Transitions",
+        "operationId": "transitions_v1_devices__device_id__transitions_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "start_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 9223372036854775807,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive lower bound on server receive time",
+              "title": "Start Ms"
+            },
+            "description": "Inclusive lower bound on server receive time"
+          },
+          {
+            "name": "end_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 9223372036854775807,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive upper bound on server receive time",
+              "title": "End Ms"
+            },
+            "description": "Inclusive upper bound on server receive time"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransitionPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "400": {
+            "description": "Invalid time window"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/feedback": {
+      "post": {
+        "summary": "Create Feedback",
+        "operationId": "create_feedback_v1_devices__device_id__feedback_post",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "description": "Referenced telemetry record does not exist"
+          },
+          "409": {
+            "description": "Feedback idempotency conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Feedback",
+        "operationId": "feedback_v1_devices__device_id__feedback_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "400": {
+            "description": "Invalid pagination cursor"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/config": {
+      "get": {
+        "summary": "Get Config",
+        "operationId": "get_config_v1_devices__device_id__config_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Put Config",
+        "operationId": "put_config_v1_devices__device_id__config_put",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigPut"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "409": {
+            "description": "Stale configuration revision"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActualPresence": {
+        "type": "string",
+        "enum": [
+          "present",
+          "absent"
+        ],
+        "title": "ActualPresence"
+      },
+      "ClockAnchor": {
+        "properties": {
+          "utc_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Utc Ms"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uptime Ms"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ClockSource"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "utc_ms",
+          "uptime_ms",
+          "source"
+        ],
+        "title": "ClockAnchor"
+      },
+      "ClockSource": {
+        "type": "string",
+        "enum": [
+          "sntp",
+          "rtc"
+        ],
+        "title": "ClockSource"
+      },
+      "ConfigPut": {
+        "properties": {
+          "base_revision": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Base Revision"
+          },
+          "created_by": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Created By",
+            "default": "api"
+          },
+          "config": {
+            "$ref": "#/components/schemas/PresenceConfig"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_revision",
+          "config"
+        ],
+        "title": "ConfigPut"
+      },
+      "ConfigResponse": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "created_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At Ms"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "config": {
+            "$ref": "#/components/schemas/PresenceConfig"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_id",
+          "revision",
+          "created_at_ms",
+          "created_by",
+          "config"
+        ],
+        "title": "ConfigResponse"
+      },
+      "FeedbackCreate": {
+        "properties": {
+          "feedback_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Feedback Id"
+          },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 16,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
+          },
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seq"
+          },
+          "actual_presence": {
+            "$ref": "#/components/schemas/ActualPresence"
+          },
+          "observed_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/FeedbackSource"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "actual_presence",
+          "source"
+        ],
+        "title": "FeedbackCreate"
+      },
+      "FeedbackPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "truncated",
+          "next_cursor"
+        ],
+        "title": "FeedbackPage"
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "feedback_id": {
+            "type": "string",
+            "title": "Feedback Id"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
+          },
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seq"
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "title": "Created At Ms"
+          },
+          "occurred_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At Ms"
+          },
+          "occurred_uptime_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Uptime Ms"
+          },
+          "time_quality": {
+            "type": "string",
+            "title": "Time Quality"
+          },
+          "actual_presence": {
+            "$ref": "#/components/schemas/ActualPresence"
+          },
+          "observed_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/FeedbackSource"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "duplicate": {
+            "type": "boolean",
+            "title": "Duplicate",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "device_id",
+          "boot_id",
+          "seq",
+          "created_at_ms",
+          "occurred_at_ms",
+          "occurred_uptime_ms",
+          "time_quality",
+          "actual_presence",
+          "observed_state",
+          "source",
+          "note"
+        ],
+        "title": "FeedbackResponse"
+      },
+      "FeedbackSource": {
+        "type": "string",
+        "enum": [
+          "touch",
+          "web",
+          "api"
+        ],
+        "title": "FeedbackSource"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database"
+          },
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ok",
+          "database",
+          "server_utc_ms"
+        ],
+        "title": "HealthResponse"
+      },
+      "IngestResponse": {
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "stored": {
+            "type": "integer",
+            "title": "Stored"
+          },
+          "duplicates": {
+            "type": "integer",
+            "title": "Duplicates"
+          },
+          "max_seq": {
+            "type": "integer",
+            "title": "Max Seq"
+          },
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "desired_config_revision": {
+            "type": "integer",
+            "title": "Desired Config Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "batch_id",
+          "stored",
+          "duplicates",
+          "max_seq",
+          "server_utc_ms",
+          "desired_config_revision"
+        ],
+        "title": "IngestResponse"
+      },
+      "PresenceConfig": {
+        "properties": {
+          "minimum_on_ms": {
+            "type": "integer",
+            "maximum": 600000.0,
+            "minimum": 0.0,
+            "title": "Minimum On Ms",
+            "default": 10000
+          },
+          "pir_hold_ms": {
+            "type": "integer",
+            "maximum": 3600000.0,
+            "minimum": 1000.0,
+            "title": "Pir Hold Ms",
+            "default": 30000
+          },
+          "sound_hold_ms": {
+            "type": "integer",
+            "maximum": 600000.0,
+            "minimum": 0.0,
+            "title": "Sound Hold Ms",
+            "default": 12000
+          },
+          "max_sound_bridge_ms": {
+            "type": "integer",
+            "maximum": 3600000.0,
+            "minimum": 0.0,
+            "title": "Max Sound Bridge Ms",
+            "default": 300000
+          },
+          "cooldown_ms": {
+            "type": "integer",
+            "maximum": 600000.0,
+            "minimum": 0.0,
+            "title": "Cooldown Ms",
+            "default": 5000
+          },
+          "sound_factor": {
+            "type": "number",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Sound Factor",
+            "default": 1.12
+          },
+          "telemetry_interval_ms": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "minimum": 250.0,
+            "title": "Telemetry Interval Ms",
+            "default": 1000
+          },
+          "upload_batch_size": {
+            "type": "integer",
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "title": "Upload Batch Size",
+            "default": 30
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PresenceConfig"
+      },
+      "PresenceState": {
+        "type": "string",
+        "enum": [
+          "calibrating",
+          "idle",
+          "present",
+          "cooldown"
+        ],
+        "title": "PresenceState"
+      },
+      "SampleOut": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "title": "Boot Id"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "title": "Uptime Ms"
+          },
+          "observed_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At Ms"
+          },
+          "received_at_ms": {
+            "type": "integer",
+            "title": "Received At Ms"
+          },
+          "time_quality": {
+            "type": "string",
+            "title": "Time Quality"
+          },
+          "pir": {
+            "type": "boolean",
+            "title": "Pir"
+          },
+          "mic_rms": {
+            "type": "number",
+            "title": "Mic Rms"
+          },
+          "mic_envelope": {
+            "type": "number",
+            "title": "Mic Envelope"
+          },
+          "mic_min": {
+            "type": "integer",
+            "title": "Mic Min"
+          },
+          "mic_max": {
+            "type": "integer",
+            "title": "Mic Max"
+          },
+          "noise_floor": {
+            "type": "number",
+            "title": "Noise Floor"
+          },
+          "sound_threshold": {
+            "type": "number",
+            "title": "Sound Threshold"
+          },
+          "sound_active": {
+            "type": "boolean",
+            "title": "Sound Active"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PresenceState"
+          },
+          "brightness": {
+            "type": "integer",
+            "title": "Brightness"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_id",
+          "boot_id",
+          "seq",
+          "uptime_ms",
+          "observed_at_ms",
+          "received_at_ms",
+          "time_quality",
+          "pir",
+          "mic_rms",
+          "mic_envelope",
+          "mic_min",
+          "mic_max",
+          "noise_floor",
+          "sound_threshold",
+          "sound_active",
+          "state",
+          "brightness"
+        ],
+        "title": "SampleOut"
+      },
+      "SamplePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SampleOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "truncated",
+          "next_cursor"
+        ],
+        "title": "SamplePage"
+      },
+      "SampleRecord": {
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Seq"
+          },
+          "kind": {
+            "type": "string",
+            "const": "sample",
+            "title": "Kind"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uptime Ms"
+          },
+          "pir": {
+            "type": "boolean",
+            "title": "Pir"
+          },
+          "mic_rms": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Mic Rms"
+          },
+          "mic_envelope": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Mic Envelope"
+          },
+          "mic_min": {
+            "type": "integer",
+            "maximum": 32767.0,
+            "minimum": -32768.0,
+            "title": "Mic Min"
+          },
+          "mic_max": {
+            "type": "integer",
+            "maximum": 32767.0,
+            "minimum": -32768.0,
+            "title": "Mic Max"
+          },
+          "noise_floor": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Noise Floor"
+          },
+          "sound_threshold": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Sound Threshold"
+          },
+          "sound_active": {
+            "type": "boolean",
+            "title": "Sound Active"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PresenceState"
+          },
+          "brightness": {
+            "type": "integer",
+            "maximum": 255.0,
+            "minimum": 0.0,
+            "title": "Brightness"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "seq",
+          "kind",
+          "uptime_ms",
+          "pir",
+          "mic_rms",
+          "mic_envelope",
+          "mic_min",
+          "mic_max",
+          "noise_floor",
+          "sound_threshold",
+          "sound_active",
+          "state",
+          "brightness"
+        ],
+        "title": "SampleRecord"
+      },
+      "TelemetryBatch": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "batch_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Batch Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Boot Id"
+          },
+          "firmware_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Firmware Version"
+          },
+          "applied_config_revision": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Applied Config Revision"
+          },
+          "clock_anchor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClockAnchor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "records": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SampleRecord"
+                },
+                {
+                  "$ref": "#/components/schemas/TransitionRecord"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": {
+                  "sample": "#/components/schemas/SampleRecord",
+                  "transition": "#/components/schemas/TransitionRecord"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 256,
+            "minItems": 1,
+            "title": "Records"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "batch_id",
+          "boot_id",
+          "firmware_version",
+          "applied_config_revision",
+          "records"
+        ],
+        "title": "TelemetryBatch"
+      },
+      "TransitionOut": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "title": "Boot Id"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "title": "Uptime Ms"
+          },
+          "observed_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At Ms"
+          },
+          "received_at_ms": {
+            "type": "integer",
+            "title": "Received At Ms"
+          },
+          "time_quality": {
+            "type": "string",
+            "title": "Time Quality"
+          },
+          "from_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_state": {
+            "$ref": "#/components/schemas/PresenceState"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/TransitionReason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_id",
+          "boot_id",
+          "seq",
+          "uptime_ms",
+          "observed_at_ms",
+          "received_at_ms",
+          "time_quality",
+          "from_state",
+          "to_state",
+          "reason"
+        ],
+        "title": "TransitionOut"
+      },
+      "TransitionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TransitionOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "truncated",
+          "next_cursor"
+        ],
+        "title": "TransitionPage"
+      },
+      "TransitionReason": {
+        "type": "string",
+        "enum": [
+          "boot",
+          "calibration_complete",
+          "pir_motion",
+          "sound_bridge",
+          "quiet_timeout",
+          "cooldown_timeout",
+          "touch_wake",
+          "bench_override",
+          "config_change",
+          "unknown"
+        ],
+        "title": "TransitionReason"
+      },
+      "TransitionRecord": {
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Seq"
+          },
+          "kind": {
+            "type": "string",
+            "const": "transition",
+            "title": "Kind"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uptime Ms"
+          },
+          "from_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_state": {
+            "$ref": "#/components/schemas/PresenceState"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/TransitionReason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "seq",
+          "kind",
+          "uptime_ms",
+          "from_state",
+          "to_state",
+          "reason"
+        ],
+        "title": "TransitionRecord"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "PresenceBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

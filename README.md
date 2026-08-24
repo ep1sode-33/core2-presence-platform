@@ -5,6 +5,34 @@ firmware is a hardware-validation baseline: PIR input, the built-in microphone,
 sensor fusion, LCD power control, and flicker-free rendering have all been
 validated before networking and dashboard features are added.
 
+## Repository layout
+
+- `src/` and `platformio.ini`: Core2 firmware.
+- `backend/`: FastAPI + SQLite presence telemetry service.
+- `contracts/`: versioned device/server payload schemas.
+- `docs/`: architecture and hardware invariants.
+- `deploy/devb/`: explicit dual-address Uvicorn launchers and systemd files.
+
+The existing environmental sensor API stays on port 8080. The new presence API
+uses port 8081 so both services can be deployed and rolled back independently.
+
+## Presence API
+
+The v1 backend accepts append-only sample and state-transition batches, stores
+human feedback, and serves revisioned device configuration. Retries are
+idempotent on `(device_id, boot_id, seq)`; conflicting reuse of an identity is
+rejected instead of silently replacing history.
+
+```sh
+make backend-venv
+make backend-test
+make backend-run
+```
+
+See `contracts/telemetry-v1.schema.json`, `contracts/api-v1.openapi.json`, and
+`docs/architecture.md` for the generated device/server contracts and runtime
+boundaries.
+
 ## Expected hardware
 
 - M5Stack Core2

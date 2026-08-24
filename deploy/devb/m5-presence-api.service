@@ -1,0 +1,30 @@
+[Unit]
+Description=M5 Core2 Presence API
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=m5-presence
+WorkingDirectory=/opt/m5-presence
+Environment="PRESENCE_DB_PATH=/var/lib/m5-presence/presence.db"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+Environment="PRESENCE_REQUIRE_TOKEN=1"
+LoadCredential=api_token:/etc/m5-presence.token
+ExecStart=/opt/m5-presence/backend/.venv/bin/python /opt/m5-presence/deploy/devb/serve_presence_api.py
+Restart=on-failure
+RestartSec=2
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+[Install]
+WantedBy=multi-user.target
