@@ -1,6 +1,7 @@
 .pio/
 .platformio/
 .venv/
+.build/
 .DS_Store
 
 # Python/backend build and runtime state.

@@ -2,23 +2,29 @@
 #include <M5Unified.h>
 #include <algorithm>
 #include <cmath>
+#include <inttypes.h>
 #include <driver/i2s.h>
+
+#include "presence_types.h"
+#include "runtime_identity.h"
+#include "telemetry.h"
 
 namespace {
 
 // M5Stack Core2 PORT.B: white wire / digital input is GPIO36.
 constexpr gpio_num_t kPirPin = GPIO_NUM_36;
 
-constexpr uint32_t kCalibrationMs = 5000;
-constexpr uint32_t kBenchTestMs = 5 * 60 * 1000;
-constexpr uint32_t kMinimumOnMs = 10000;
-constexpr uint32_t kPirHoldMs = 30000;
-constexpr uint32_t kSoundHoldMs = 12000;
-constexpr uint32_t kMaxSoundBridgeMs = 5 * 60 * 1000;
-constexpr uint32_t kCooldownMs = 5000;
-constexpr uint32_t kTouchWakeMs = 15000;
-constexpr uint32_t kDisplayIntervalMs = 150;
-constexpr uint32_t kSerialIntervalMs = 250;
+constexpr uint64_t kCalibrationMs = 5000;
+constexpr uint64_t kBenchTestMs = 5 * 60 * 1000;
+constexpr uint64_t kMinimumOnMs = 10000;
+constexpr uint64_t kPirHoldMs = 30000;
+constexpr uint64_t kSoundHoldMs = 12000;
+constexpr uint64_t kMaxSoundBridgeMs = 5 * 60 * 1000;
+constexpr uint64_t kCooldownMs = 5000;
+constexpr uint64_t kTouchWakeMs = 15000;
+constexpr uint64_t kDisplayIntervalMs = 150;
+constexpr uint64_t kSerialIntervalMs = 250;
+constexpr uint64_t kTelemetryIntervalMs = 1000;
 
 // Match M5Stack's original SPM1423 capture layout: 44.1 kHz and a 512-byte
 // read (256 signed 16-bit samples). The legacy ESP32 PDM peripheral is
@@ -29,23 +35,20 @@ constexpr uint32_t kMicSampleRate = 44100;
 constexpr uint8_t kOnBrightness = 255;
 constexpr uint8_t kCooldownBrightness = 60;
 
-enum class PresenceState : uint8_t {
-  kCalibrating,
-  kIdle,
-  kPresent,
-  kCooldown,
-};
-
 int16_t micSamples[kMicSamples] = {};
 M5Canvas displayFrame(&M5.Display);
+RuntimeIdentity runtimeIdentity;
+TelemetryQueue telemetryQueue;
 
 PresenceState state = PresenceState::kCalibrating;
-uint32_t bootMs = 0;
-uint32_t stateSinceMs = 0;
-uint32_t lastPirMs = 0;
-uint32_t lastSoundMs = 0;
-uint32_t lastDisplayMs = 0;
-uint32_t lastSerialMs = 0;
+uint64_t bootMs = 0;
+uint64_t stateSinceMs = 0;
+uint64_t lastPirMs = 0;
+uint64_t lastSoundMs = 0;
+uint64_t lastDisplayMs = 0;
+uint64_t lastSerialMs = 0;
+uint64_t lastTelemetrySampleMs = 0;
+uint64_t nextTelemetrySeq = 0;
 
 float micRms = 0.0f;
 float micEnvelope = 0.0f;
@@ -66,17 +69,7 @@ bool fallbackUiInitialized = false;
 uint8_t currentBrightness = 255;
 
 const char* stateName(PresenceState value) {
-  switch (value) {
-    case PresenceState::kCalibrating:
-      return "CALIBRATING";
-    case PresenceState::kIdle:
-      return "IDLE / SCREEN OFF";
-    case PresenceState::kPresent:
-      return "PRESENT";
-    case PresenceState::kCooldown:
-      return "COOLDOWN";
-  }
-  return "UNKNOWN";
+  return presenceStateDisplayName(value);
 }
 
 uint16_t stateColor(PresenceState value) {
@@ -118,11 +111,60 @@ void forceCore2DisplayPower() {
   setBrightness(255);
 }
 
-void enterState(PresenceState next, uint32_t now) {
+void enqueueTransition(bool hasFromState, PresenceState fromState,
+                       PresenceState toState, TransitionReason reason,
+                       uint64_t now) {
+  TelemetryRecord record;
+  record.kind = TelemetryKind::kTransition;
+  record.seq = nextTelemetrySeq++;
+  record.uptimeMs = now;
+  record.transition.hasFromState = hasFromState;
+  record.transition.fromState = fromState;
+  record.transition.toState = toState;
+  record.transition.reason = reason;
+
+  const QueuePushResult result = telemetryQueue.push(record);
+  if (result == QueuePushResult::kCriticalDropped) {
+    Serial.printf("EVENT,telemetry_critical_drop,%" PRIu64 ",%" PRIu64 "\n",
+                  now, record.seq);
+  }
+}
+
+void enqueueSample(uint64_t now) {
+  if (now - lastTelemetrySampleMs < kTelemetryIntervalMs) {
+    return;
+  }
+  lastTelemetrySampleMs = now;
+
+  TelemetryRecord record;
+  record.kind = TelemetryKind::kSample;
+  record.seq = nextTelemetrySeq++;
+  record.uptimeMs = now;
+  record.sample.pir = pirHigh;
+  record.sample.micRms = micRms;
+  record.sample.micEnvelope = micEnvelope;
+  record.sample.micMin = micMin;
+  record.sample.micMax = micMax;
+  record.sample.noiseFloor = noiseFloor;
+  record.sample.soundThreshold = soundThreshold;
+  record.sample.soundActive = soundActive;
+  record.sample.state = state;
+  record.sample.brightness = currentBrightness;
+
+  const QueuePushResult result = telemetryQueue.push(record);
+  if (result == QueuePushResult::kSampleDropped &&
+      telemetryQueue.droppedSamples() % 60 == 1) {
+    Serial.printf("EVENT,telemetry_sample_drop,%" PRIu64 ",%u\n", now,
+                  telemetryQueue.droppedSamples());
+  }
+}
+
+void enterState(PresenceState next, TransitionReason reason, uint64_t now) {
   if (next == state) {
     return;
   }
 
+  const PresenceState previous = state;
   state = next;
   stateSinceMs = now;
 
@@ -139,7 +181,9 @@ void enterState(PresenceState next, uint32_t now) {
       break;
   }
 
-  Serial.printf("EVENT,state,%lu,%s\n", now, stateName(state));
+  enqueueTransition(true, previous, state, reason, now);
+  Serial.printf("EVENT,state,%" PRIu64 ",%s,%s\n", now, stateName(state),
+                transitionReasonWireName(reason));
 }
 
 float calculateRms(const int16_t* samples, size_t count) {
@@ -203,7 +247,7 @@ bool beginRawMicrophone() {
   return true;
 }
 
-void sampleMicrophone(uint32_t now) {
+void sampleMicrophone(uint64_t now) {
   if (!micBeginOk) {
     micRms = 0.0f;
     soundActive = false;
@@ -264,7 +308,7 @@ void sampleMicrophone(uint32_t now) {
   }
 }
 
-void readTouch(uint32_t now) {
+void readTouch(uint64_t now) {
   const auto touch = M5.Touch.getDetail();
   if (!touch.wasClicked()) {
     return;
@@ -274,18 +318,18 @@ void readTouch(uint32_t now) {
   // the screen so diagnostics remain accessible after IDLE turns it off.
   if (touch.y > 190 && touch.x < 105) {
     soundFactor = fmaxf(1.05f, soundFactor - 0.02f);
-    Serial.printf("EVENT,sensitivity,%lu,%.2f\n", now, soundFactor);
+    Serial.printf("EVENT,sensitivity,%" PRIu64 ",%.2f\n", now, soundFactor);
   } else if (touch.y > 190 && touch.x > 215) {
     soundFactor = fminf(2.0f, soundFactor + 0.02f);
-    Serial.printf("EVENT,sensitivity,%lu,%.2f\n", now, soundFactor);
+    Serial.printf("EVENT,sensitivity,%" PRIu64 ",%.2f\n", now, soundFactor);
   }
 
   lastPirMs = now;
   lastSoundMs = now;
-  enterState(PresenceState::kPresent, now);
+  enterState(PresenceState::kPresent, TransitionReason::kTouchWake, now);
 }
 
-void updatePresenceState(uint32_t now) {
+void updatePresenceState(uint64_t now) {
   const bool pirRising = pirHigh && !previousPirHigh;
   if (pirHigh) {
     lastPirMs = now;
@@ -297,7 +341,7 @@ void updatePresenceState(uint32_t now) {
   if (now - bootMs >= kCalibrationMs && now - bootMs < kBenchTestMs) {
     lastPirMs = now;
     lastSoundMs = now;
-    enterState(PresenceState::kPresent, now);
+    enterState(PresenceState::kPresent, TransitionReason::kBenchOverride, now);
     previousPirHigh = pirHigh;
     return;
   }
@@ -308,9 +352,11 @@ void updatePresenceState(uint32_t now) {
         if (pirHigh) {
           lastPirMs = now;
           lastSoundMs = now;
-          enterState(PresenceState::kPresent, now);
+          enterState(PresenceState::kPresent,
+                     TransitionReason::kCalibrationComplete, now);
         } else {
-          enterState(PresenceState::kIdle, now);
+          enterState(PresenceState::kIdle,
+                     TransitionReason::kCalibrationComplete, now);
         }
       }
       break;
@@ -321,7 +367,7 @@ void updatePresenceState(uint32_t now) {
       if (pirRising || pirHigh) {
         lastPirMs = now;
         lastSoundMs = now;
-        enterState(PresenceState::kPresent, now);
+        enterState(PresenceState::kPresent, TransitionReason::kPirMotion, now);
       }
       break;
 
@@ -330,7 +376,8 @@ void updatePresenceState(uint32_t now) {
       const bool pirQuiet = now - lastPirMs >= kPirHoldMs;
       const bool soundQuiet = now - lastSoundMs >= kSoundHoldMs;
       if (minimumOnElapsed && pirQuiet && soundQuiet) {
-        enterState(PresenceState::kCooldown, now);
+        enterState(PresenceState::kCooldown, TransitionReason::kQuietTimeout,
+                   now);
       }
       break;
     }
@@ -345,9 +392,13 @@ void updatePresenceState(uint32_t now) {
         if (soundCanBridge) {
           lastSoundMs = now;
         }
-        enterState(PresenceState::kPresent, now);
+        enterState(PresenceState::kPresent,
+                   pirHigh ? TransitionReason::kPirMotion
+                           : TransitionReason::kSoundBridge,
+                   now);
       } else if (now - stateSinceMs >= kCooldownMs) {
-        enterState(PresenceState::kIdle, now);
+        enterState(PresenceState::kIdle, TransitionReason::kCooldownTimeout,
+                   now);
       }
       break;
   }
@@ -367,7 +418,7 @@ void drawBar(M5Canvas& canvas, int x, int y, int width, int height,
                   height - 4, TFT_BLACK);
 }
 
-void drawDisplayFallback(uint32_t now) {
+void drawDisplayFallback(uint64_t now) {
   if (!fallbackUiInitialized) {
     forceCore2DisplayPower();
     M5.Display.fillScreen(TFT_YELLOW);
@@ -390,14 +441,14 @@ void drawDisplayFallback(uint32_t now) {
   M5.Display.setCursor(10, 124);
   M5.Display.printf("Sound: %s", soundActive ? "YES" : "no ");
   M5.Display.setCursor(10, 154);
-  const uint32_t elapsed = now - bootMs;
-  M5.Display.printf("Test: %lus ",
+  const uint64_t elapsed = now - bootMs;
+  M5.Display.printf("Test: %" PRIu64 "s ",
                     elapsed < kBenchTestMs
                         ? (kBenchTestMs - elapsed) / 1000
                         : 0);
 }
 
-void drawDisplay(uint32_t now) {
+void drawDisplay(uint64_t now) {
   if (currentBrightness == 0 || now - lastDisplayMs < kDisplayIntervalMs) {
     return;
   }
@@ -419,9 +470,9 @@ void drawDisplay(uint32_t now) {
 
   displayFrame.setTextColor(stateColor(state), TFT_BLACK);
   if (now - bootMs < kBenchTestMs) {
-    const uint32_t secondsLeft = (kBenchTestMs - (now - bootMs)) / 1000;
+    const uint64_t secondsLeft = (kBenchTestMs - (now - bootMs)) / 1000;
     char testLabel[32];
-    snprintf(testLabel, sizeof(testLabel), "TEST MODE  %lu:%02lu",
+    snprintf(testLabel, sizeof(testLabel), "TEST MODE  %" PRIu64 ":%02" PRIu64,
              secondsLeft / 60, secondsLeft % 60);
     displayFrame.drawString(testLabel, 10, 36);
   } else {
@@ -473,13 +524,13 @@ void drawDisplay(uint32_t now) {
   M5.Display.endWrite();
 }
 
-void printSerial(uint32_t now) {
+void printSerial(uint64_t now) {
   if (now - lastSerialMs < kSerialIntervalMs) {
     return;
   }
   lastSerialMs = now;
   Serial.printf(
-      "DATA,%lu,%d,%.1f,%.1f,%d,%d,%.1f,%.1f,%d,%s,%u\n", now,
+      "DATA,%" PRIu64 ",%d,%.1f,%.1f,%d,%d,%.1f,%.1f,%d,%s,%u\n", now,
       pirHigh ? 1 : 0, micRms, micEnvelope, micMin, micMax, noiseFloor,
       soundThreshold, soundActive ? 1 : 0, stateName(state), currentBrightness);
 }
@@ -532,12 +583,20 @@ void setup() {
   forceCore2DisplayPower();
   micBeginOk = beginRawMicrophone();
 
-  bootMs = millis();
+  bootMs = monotonicMillis();
   stateSinceMs = bootMs;
   lastPirMs = bootMs;
   lastSoundMs = bootMs;
+  lastTelemetrySampleMs = bootMs;
+  runtimeIdentity = createRuntimeIdentity();
+  enqueueTransition(false, PresenceState::kCalibrating,
+                    PresenceState::kCalibrating, TransitionReason::kBoot,
+                    bootMs);
 
-  Serial.println("Core2 Presence Lab v0.1");
+  Serial.println("Core2 Presence Lab v0.2");
+  Serial.printf("IDENTITY,device_id,%s,boot_id,%s,valid,%d\n",
+                runtimeIdentity.deviceId, runtimeIdentity.bootId,
+                runtimeIdentity.deviceIdValid ? 1 : 0);
   Serial.printf(
       "DEVICE,pir_gpio,%d,tmos_0x5a,%d,mic_started,%d,mic_data,34,"
       "mic_clock,0,driver,raw_i2s_pdm,base_imu,%d,board,%d,pmic,%d,"
@@ -554,7 +613,7 @@ void setup() {
 }
 
 void loop() {
-  const uint32_t now = millis();
+  const uint64_t now = monotonicMillis();
   M5.update();
 
   pirHigh = digitalRead(kPirPin) == HIGH;
@@ -563,6 +622,7 @@ void loop() {
   updatePresenceState(now);
   drawDisplay(now);
   printSerial(now);
+  enqueueSample(now);
 
   delay(1);
 }

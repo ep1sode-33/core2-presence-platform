@@ -1,9 +1,9 @@
 # Core2 Presence
 
-A presence-aware desk display built around an M5Stack Core2. The current
-firmware is a hardware-validation baseline: PIR input, the built-in microphone,
-sensor fusion, LCD power control, and flicker-free rendering have all been
-validated before networking and dashboard features are added.
+A presence-aware desk display built around an M5Stack Core2. The firmware keeps
+the validated PIR, built-in microphone, sensor-fusion, LCD power, and
+flicker-free rendering behavior while the telemetry and networking layers are
+added in independently testable stages.
 
 ## Repository layout
 
@@ -32,6 +32,19 @@ make backend-run
 See `contracts/telemetry-v1.schema.json`, `contracts/api-v1.openapi.json`, and
 `docs/architecture.md` for the generated device/server contracts and runtime
 boundaries.
+
+## Firmware telemetry foundation
+
+The hardware loop uses a 64-bit monotonic clock, a stable device ID derived
+from the ESP32 eFuse MAC, and a new random 128-bit boot ID on each startup.
+Once per second it places an immutable sensor snapshot in a fixed-size RAM
+queue; state transitions are queued immediately and have reserved capacity so
+ordinary samples cannot crowd them out. Sequence numbers are never reused,
+even when a full queue drops a record.
+
+This stage deliberately performs no Wi-Fi, HTTP, NVS, or flash work. Those
+operations belong to the lower-priority uploader so display and sensor timing
+remain isolated from network stalls.
 
 ## Expected hardware
 
@@ -93,6 +106,7 @@ cannot wake the display on its own.
 All dependencies are kept inside this directory.
 
 ```sh
+make firmware-unit
 PLATFORMIO_CORE_DIR="$PWD/.platformio" ./.venv/bin/pio run
 PLATFORMIO_CORE_DIR="$PWD/.platformio" ./.venv/bin/pio run --target upload
 PLATFORMIO_CORE_DIR="$PWD/.platformio" ./.venv/bin/pio device monitor

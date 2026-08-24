@@ -1,4 +1,4 @@
-.PHONY: firmware-build firmware-upload firmware-monitor backend-install backend-venv backend-test backend-lint backend-run contract-generate contract-check
+.PHONY: firmware-build firmware-unit firmware-upload firmware-monitor backend-install backend-venv backend-test backend-lint backend-run contract-generate contract-check
 
 PYTHON ?= python3
 PIO := PLATFORMIO_CORE_DIR=$(CURDIR)/.platformio $(CURDIR)/.venv/bin/pio
@@ -6,9 +6,17 @@ BACKEND_PYTHON := $(CURDIR)/backend/.venv/bin/python
 BACKEND_PYTEST := $(CURDIR)/backend/.venv/bin/pytest
 BACKEND_RUFF := $(CURDIR)/backend/.venv/bin/ruff
 BACKEND_UVICORN := $(CURDIR)/backend/.venv/bin/uvicorn
+NATIVE_TEST := $(CURDIR)/.build/native/telemetry_queue_test
 
 firmware-build:
 	$(PIO) run
+
+firmware-unit:
+	mkdir -p $(CURDIR)/.build/native
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_telemetry_queue.cpp src/telemetry.cpp \
+		-o $(NATIVE_TEST)
+	$(NATIVE_TEST)
 
 firmware-upload:
 	$(PIO) run --target upload
