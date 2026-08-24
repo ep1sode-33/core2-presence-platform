@@ -11,7 +11,7 @@ From an unpacked repository checkout on a first deployment:
 cd /opt/m5-presence
 make backend-install PYTHON=python3
 install -m 0600 /dev/null /etc/m5-presence.token
-openssl rand -hex 32 -out /etc/m5-presence.token
+openssl rand -out /etc/m5-presence.token -hex 32
 install -m 0644 deploy/devb/m5-presence-api.service \
   /etc/systemd/system/m5-presence-api.service
 systemd-analyze verify /etc/systemd/system/m5-presence-api.service
