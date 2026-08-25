@@ -27,6 +27,7 @@ struct DashboardSnapshot {
   WeatherReading weather = {};
   DashboardSourceHealth environmentHealth = {};
   DashboardSourceHealth weatherHealth = {};
+  bool clockSynchronized = false;
   uint32_t version = 0;
 };
 
@@ -58,6 +59,10 @@ class DashboardMailbox {
 
   void recordEnvironmentFailure(uint64_t lastAttemptUptimeMs);
   void recordWeatherFailure(uint64_t lastAttemptUptimeMs);
+
+  // Latches true only after SNTP has supplied a trusted epoch and the Eastern
+  // TZ rule has been installed. Repeated calls are intentionally idempotent.
+  void markClockSynchronized();
 
   DashboardSnapshot snapshot() const;
   bool copySnapshot(DashboardSnapshot* output) const;

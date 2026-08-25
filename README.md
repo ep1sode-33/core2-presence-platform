@@ -157,7 +157,9 @@ The production dashboard reads two low-frequency sources in the existing Core
 The room API's `OUT_DATED` status is shown as stale while preserving its last
 values. Network or parse failures likewise preserve the last successful
 snapshot. Rain and snow remain distinct forecast fields. Weather data is
-provided by [Open-Meteo](https://open-meteo.com/).
+provided by [Open-Meteo](https://open-meteo.com/). All room and forecast
+temperatures are displayed in Celsius. The header clock is synchronized by
+SNTP and rendered in Eastern time with automatic EST/EDT daylight transitions.
 
 ## Build, flash, and monitor
 

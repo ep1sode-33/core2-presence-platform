@@ -27,16 +27,16 @@ std::string validWeather() {
     "latitude":37.23,
     "current":{
       "time":"2026-08-24T08:15",
-      "temperature_2m":72.5,
+      "temperature_2m":22.5,
       "relative_humidity_2m":61,
-      "apparent_temperature":73.25,
+      "apparent_temperature":23.25,
       "weather_code":3
     },
     "daily":{
       "time":["2026-08-24"],
       "weather_code":[61],
-      "temperature_2m_max":[81.5],
-      "temperature_2m_min":[59.25],
+      "temperature_2m_max":[27.5],
+      "temperature_2m_min":[15.25],
       "precipitation_probability_max":[70],
       "rain_sum":[0.18],
       "showers_sum":[0.04],
@@ -95,7 +95,7 @@ void expectWeatherError(std::string_view body,
   assert(!result.ok());
   assert(result.error == expected);
   assert(!result.reading.valid);
-  assert(result.reading.currentTemperatureF == 0.0f);
+  assert(result.reading.currentTemperatureC == 0.0f);
   assert(result.reading.currentHumidityPct == 0.0f);
   assert(result.reading.currentWeatherCode == 0);
   assert(allZero(result.reading.currentTime,
@@ -264,10 +264,10 @@ void testWeatherSuccessAndArrayHandling() {
   assert(basic.ok());
   assert(std::strcmp(basic.reading.currentTime, "2026-08-24T08:15") == 0);
   assert(std::strcmp(basic.reading.forecastDate, "2026-08-24") == 0);
-  assert(std::fabs(basic.reading.currentTemperatureF - 72.5f) < 0.001f);
+  assert(std::fabs(basic.reading.currentTemperatureC - 22.5f) < 0.001f);
   assert(basic.reading.currentWeatherCode == 3);
   assert(basic.reading.forecastWeatherCode == 61);
-  assert(std::fabs(basic.reading.temperatureMaxF - 81.5f) < 0.001f);
+  assert(std::fabs(basic.reading.temperatureMaxC - 27.5f) < 0.001f);
   assert(std::fabs(basic.reading.rainSumIn - 0.18f) < 0.001f);
 
   std::string flexible = validWeather();
@@ -275,10 +275,10 @@ void testWeatherSuccessAndArrayHandling() {
               "\"time\":[\"2026-08-24\",\"2026-08-25\"]");
   replaceOnce(flexible, "\"weather_code\":[61]",
               "\"weather_code\":[61,80]");
-  replaceOnce(flexible, "\"temperature_2m_max\":[81.5]",
-              "\"temperature_2m_max\":[81.5,82]");
-  replaceOnce(flexible, "\"temperature_2m_min\":[59.25]",
-              "\"temperature_2m_min\":[59.25,60]");
+  replaceOnce(flexible, "\"temperature_2m_max\":[27.5]",
+              "\"temperature_2m_max\":[27.5,28]");
+  replaceOnce(flexible, "\"temperature_2m_min\":[15.25]",
+              "\"temperature_2m_min\":[15.25,16]");
   replaceOnce(flexible, "\"precipitation_probability_max\":[70]",
               "\"precipitation_probability_max\":[70,50]");
   replaceOnce(flexible, "\"rain_sum\":[0.18]",
@@ -363,25 +363,25 @@ void testWeatherShapeAndFieldFailures() {
 
 void testWeatherBoundsAndMalformedInput() {
   std::string minimums = validWeather();
-  replaceOnce(minimums, "\"temperature_2m\":72.5",
-              "\"temperature_2m\":-150");
-  replaceOnce(minimums, "\"apparent_temperature\":73.25",
-              "\"apparent_temperature\":160");
+  replaceOnce(minimums, "\"temperature_2m\":22.5",
+              "\"temperature_2m\":-100");
+  replaceOnce(minimums, "\"apparent_temperature\":23.25",
+              "\"apparent_temperature\":100");
   replaceOnce(minimums, "\"relative_humidity_2m\":61",
               "\"relative_humidity_2m\":0");
   replaceOnce(minimums, "\"weather_code\":3",
               "\"weather_code\":99");
-  replaceOnce(minimums, "\"temperature_2m_max\":[81.5]",
-              "\"temperature_2m_max\":[160]");
-  replaceOnce(minimums, "\"temperature_2m_min\":[59.25]",
-              "\"temperature_2m_min\":[-150]");
+  replaceOnce(minimums, "\"temperature_2m_max\":[27.5]",
+              "\"temperature_2m_max\":[100]");
+  replaceOnce(minimums, "\"temperature_2m_min\":[15.25]",
+              "\"temperature_2m_min\":[-100]");
   replaceOnce(minimums, "\"rain_sum\":[0.18]",
               "\"rain_sum\":[100]");
   assert(parseWeather(minimums).ok());
 
   std::string temperatureRange = validWeather();
-  replaceOnce(temperatureRange, "\"temperature_2m\":72.5",
-              "\"temperature_2m\":160.01");
+  replaceOnce(temperatureRange, "\"temperature_2m\":22.5",
+              "\"temperature_2m\":100.01");
   expectWeatherError(temperatureRange,
                      DashboardParseError::kValueOutOfRange);
 
@@ -405,7 +405,7 @@ void testWeatherBoundsAndMalformedInput() {
                      DashboardParseError::kValueOutOfRange);
 
   std::string overflow = validWeather();
-  replaceOnce(overflow, "\"temperature_2m_max\":[81.5]",
+  replaceOnce(overflow, "\"temperature_2m_max\":[27.5]",
               "\"temperature_2m_max\":[1e999]");
   expectWeatherError(overflow, DashboardParseError::kNumberOverflow);
 

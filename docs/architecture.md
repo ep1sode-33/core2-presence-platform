@@ -25,7 +25,9 @@ The display reads the environmental API directly over the LAN and reads the
 public Open-Meteo forecast directly. Both requests run serially in the same
 Core 0 worker that owns Wi-Fi. A POD mailbox publishes complete display-data
 snapshots to the hardware loop; HTTP, JSON parsing, and retry logic never run in
-the sampling/rendering loop.
+the sampling/rendering loop. Weather and room temperatures use Celsius end to
+end. The same mailbox latches successful SNTP synchronization before the main
+loop renders the clock with the POSIX `America/New_York` EST/EDT rules.
 
 ## Telemetry flow
 

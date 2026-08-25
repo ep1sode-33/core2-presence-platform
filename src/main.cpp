@@ -2,8 +2,10 @@
 #include <M5Unified.h>
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <cstring>
 #include <inttypes.h>
+#include <limits>
 #include <esp_system.h>
 
 #include "device_config.h"
@@ -11,6 +13,7 @@
 #include "device_config_storage.h"
 #include "device_settings.h"
 #include "dashboard_mailbox.h"
+#include "dashboard_time.h"
 #include "presence_types.h"
 #include "provisioning_protocol.h"
 #include "runtime_identity.h"
@@ -39,7 +42,7 @@ constexpr char kWeatherForecastUrl[] =
     "-80.4139&current=temperature_2m,relative_humidity_2m,"
     "apparent_temperature,weather_code&daily=weather_code,"
     "temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
-    "rain_sum,showers_sum,snowfall_sum&temperature_unit=fahrenheit&"
+    "rain_sum,showers_sum,snowfall_sum&temperature_unit=celsius&"
     "precipitation_unit=inch&timezone=America%2FNew_York&forecast_days=1";
 
 // The M5GO base exposes its analog microphone on ADC1 GPIO34. M5Unified
@@ -63,6 +66,8 @@ TouchFeedbackQueue touchFeedbackQueue;
 DeviceConfigMailbox configMailbox;
 DashboardMailbox dashboardMailbox;
 DashboardSnapshot dashboardSnapshot = {};
+time_t dashboardClockSeconds = 0;
+int64_t dashboardClockMinuteToken = std::numeric_limits<int64_t>::min();
 PresenceConfig activeConfig = defaultPresenceConfig();
 
 PresenceState state = PresenceState::kCalibrating;
@@ -711,10 +716,6 @@ const char* weatherCondition(uint8_t code) {
   return "Weather";
 }
 
-float celsiusToFahrenheit(float celsius) {
-  return celsius * 1.8f + 32.0f;
-}
-
 void formatFeedAge(char* output, size_t capacity, uint64_t now,
                    uint64_t fetchedAtUptimeMs) {
   if (output == nullptr || capacity == 0) {
@@ -741,12 +742,22 @@ void drawDashboard(Canvas& canvas, uint64_t now) {
 
   canvas.setTextSize(2);
   canvas.setTextColor(TFT_CYAN, TFT_BLACK);
-  canvas.drawString("BLACKSBURG", 8, 7);
+  canvas.drawString("BLACKSBURG", 8, 3);
+  canvas.setTextSize(1);
   canvas.setTextDatum(top_right);
   canvas.setTextColor(stateColor(state), TFT_BLACK);
-  canvas.drawString(stateName(state), 312, 7);
+  canvas.drawString(stateName(state), 312, 6);
+
+  char dateTime[kDashboardDateTimeCapacity] = {};
+  if (!formatDashboardEasternDateTime(dashboardClockSeconds, dateTime,
+                                      sizeof(dateTime))) {
+    std::snprintf(dateTime, sizeof(dateTime), "TIME SYNCING...");
+  }
+  canvas.setTextDatum(middle_center);
+  canvas.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  canvas.drawString(dateTime, 160, 24);
   canvas.setTextDatum(top_left);
-  canvas.drawFastHLine(8, 29, 304, TFT_DARKGREY);
+  canvas.drawFastHLine(8, 31, 304, TFT_DARKGREY);
 
   canvas.drawRoundRect(6, 36, 151, 134, 7, TFT_DARKGREY);
   canvas.setTextSize(1);
@@ -760,19 +771,19 @@ void drawDashboard(Canvas& canvas, uint64_t now) {
     char value[40] = {};
     canvas.setTextSize(4);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
-    std::snprintf(value, sizeof(value), "%.0fF", weather.currentTemperatureF);
+    std::snprintf(value, sizeof(value), "%.0fC", weather.currentTemperatureC);
     canvas.drawString(value, 13, 57);
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_CYAN, TFT_BLACK);
     canvas.drawString(weatherCondition(weather.currentWeatherCode), 13, 91);
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    std::snprintf(value, sizeof(value), "Feels %.0fF  RH %.0f%%",
-                  weather.apparentTemperatureF,
+    std::snprintf(value, sizeof(value), "Feels %.0fC  RH %.0f%%",
+                  weather.apparentTemperatureC,
                   weather.currentHumidityPct);
     canvas.drawString(value, 13, 119);
-    std::snprintf(value, sizeof(value), "High %.0f  Low %.0f",
-                  weather.temperatureMaxF, weather.temperatureMinF);
+    std::snprintf(value, sizeof(value), "High %.0fC Low %.0fC",
+                  weather.temperatureMaxC, weather.temperatureMinC);
     canvas.drawString(value, 13, 136);
     std::snprintf(value, sizeof(value), "Precip %.0f%%",
                   weather.precipitationProbabilityMaxPct);
@@ -803,8 +814,8 @@ void drawDashboard(Canvas& canvas, uint64_t now) {
     char value[40] = {};
     canvas.setTextSize(3);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
-    std::snprintf(value, sizeof(value), "%.1fF",
-                  celsiusToFahrenheit(environment.temperatureC));
+    std::snprintf(value, sizeof(value), "%.1fC",
+                  environment.temperatureC);
     canvas.drawString(value, 170, 62);
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -871,6 +882,23 @@ void refreshDashboardSnapshot() {
     return;
   }
   dashboardSnapshot = latest;
+  displayDirty = true;
+}
+
+void refreshDashboardClock() {
+  time_t currentSeconds = 0;
+  int64_t minuteToken = -1;
+  if (dashboardSnapshot.clockSynchronized) {
+    currentSeconds = std::time(nullptr);
+    if (currentSeconds >= kMinimumDashboardEpochSeconds) {
+      minuteToken = static_cast<int64_t>(currentSeconds) / 60;
+    }
+  }
+  if (minuteToken == dashboardClockMinuteToken) {
+    return;
+  }
+  dashboardClockMinuteToken = minuteToken;
+  dashboardClockSeconds = minuteToken >= 0 ? currentSeconds : 0;
   displayDirty = true;
 }
 
@@ -1005,7 +1033,7 @@ void setup() {
                     PresenceState::kCalibrating, TransitionReason::kBoot,
                     bootMs);
 
-  Serial.println("M5GO Presence Lab v0.6.0");
+  Serial.println("M5GO Presence Lab v0.6.1");
   Serial.printf("IDENTITY,device_id,%s,boot_id,%s,valid,%d\n",
                 runtimeIdentity.deviceId, runtimeIdentity.bootId,
                 runtimeIdentity.deviceIdValid ? 1 : 0);
@@ -1079,6 +1107,7 @@ void loop() {
   const uint64_t now = monotonicMillis();
   applyPendingConfig(now);
   refreshDashboardSnapshot();
+  refreshDashboardClock();
   M5.update();
   logButtonPinChanges(now);
 

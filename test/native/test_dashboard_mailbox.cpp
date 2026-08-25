@@ -26,15 +26,15 @@ EnvironmentReading environmentAt(uint32_t id) {
 WeatherReading weatherAt(uint32_t id) {
   WeatherReading reading = {};
   reading.valid = true;
-  reading.currentTemperatureF = static_cast<float>(id);
+  reading.currentTemperatureC = static_cast<float>(id);
   reading.currentHumidityPct = static_cast<float>(id) + 0.125f;
-  reading.apparentTemperatureF = static_cast<float>(id) + 0.25f;
+  reading.apparentTemperatureC = static_cast<float>(id) + 0.25f;
   reading.currentWeatherCode = static_cast<uint8_t>(id % 100);
   std::strcpy(reading.currentTime, "2026-08-24T12:30");
   std::strcpy(reading.forecastDate, "2026-08-24");
   reading.forecastWeatherCode = static_cast<uint8_t>(id % 90);
-  reading.temperatureMaxF = static_cast<float>(id) + 0.5f;
-  reading.temperatureMinF = static_cast<float>(id) - 0.5f;
+  reading.temperatureMaxC = static_cast<float>(id) + 0.5f;
+  reading.temperatureMinC = static_cast<float>(id) - 0.5f;
   reading.precipitationProbabilityMaxPct =
       static_cast<float>(id) + 0.625f;
   reading.rainSumIn = static_cast<float>(id) + 0.75f;
@@ -57,15 +57,15 @@ void assertEnvironmentEquals(const EnvironmentReading& actual,
 void assertWeatherEquals(const WeatherReading& actual,
                          const WeatherReading& expected) {
   assert(actual.valid == expected.valid);
-  assert(actual.currentTemperatureF == expected.currentTemperatureF);
+  assert(actual.currentTemperatureC == expected.currentTemperatureC);
   assert(actual.currentHumidityPct == expected.currentHumidityPct);
-  assert(actual.apparentTemperatureF == expected.apparentTemperatureF);
+  assert(actual.apparentTemperatureC == expected.apparentTemperatureC);
   assert(actual.currentWeatherCode == expected.currentWeatherCode);
   assert(std::strcmp(actual.currentTime, expected.currentTime) == 0);
   assert(std::strcmp(actual.forecastDate, expected.forecastDate) == 0);
   assert(actual.forecastWeatherCode == expected.forecastWeatherCode);
-  assert(actual.temperatureMaxF == expected.temperatureMaxF);
-  assert(actual.temperatureMinF == expected.temperatureMinF);
+  assert(actual.temperatureMaxC == expected.temperatureMaxC);
+  assert(actual.temperatureMinC == expected.temperatureMinC);
   assert(actual.precipitationProbabilityMaxPct ==
          expected.precipitationProbabilityMaxPct);
   assert(actual.rainSumIn == expected.rainSumIn);
@@ -87,12 +87,26 @@ void testInitialSnapshotIsEmpty() {
   assert(initial.weatherHealth.fetchedAtUptimeMs == 0);
   assert(initial.weatherHealth.lastAttemptUptimeMs == 0);
   assert(initial.weatherHealth.consecutiveFailures == 0);
+  assert(!initial.clockSynchronized);
   assert(initial.version == 0);
 
   DashboardSnapshot copied = {};
   assert(mailbox.copySnapshot(&copied));
   assert(copied.version == 0);
   assert(!mailbox.copySnapshot(nullptr));
+}
+
+void testClockSynchronizationLatchIsIdempotent() {
+  DashboardMailbox mailbox;
+  mailbox.markClockSynchronized();
+  const DashboardSnapshot synchronized = mailbox.snapshot();
+  assert(synchronized.clockSynchronized);
+  assert(synchronized.version == 1);
+
+  mailbox.markClockSynchronized();
+  const DashboardSnapshot repeated = mailbox.snapshot();
+  assert(repeated.clockSynchronized);
+  assert(repeated.version == 1);
 }
 
 void testPartialUpdatesPreserveOtherSource() {
@@ -180,7 +194,7 @@ void assertCoherentConcurrentSnapshot(const DashboardSnapshot& snapshot) {
 
   if (snapshot.weather.valid) {
     const uint32_t id =
-        static_cast<uint32_t>(snapshot.weather.currentTemperatureF);
+        static_cast<uint32_t>(snapshot.weather.currentTemperatureC);
     assertWeatherEquals(snapshot.weather, weatherAt(id));
     assert(snapshot.weatherHealth.fetchedAtUptimeMs == id + 200000);
     assert(snapshot.weatherHealth.lastAttemptUptimeMs == id + 300000);
@@ -242,6 +256,7 @@ void testConcurrentPublishAndCopyRemainCoherent() {
 
 int main() {
   testInitialSnapshotIsEmpty();
+  testClockSynchronizationLatchIsIdempotent();
   testPartialUpdatesPreserveOtherSource();
   testFailuresPreserveLastGoodAcrossLargeUptimeValues();
   testVersionTokenWrapIsDefined();

@@ -74,6 +74,10 @@ firmware-unit:
 		test/native/test_dashboard_mailbox.cpp src/dashboard_mailbox.cpp \
 		-o $(NATIVE_BUILD)/dashboard_mailbox_test
 	$(NATIVE_BUILD)/dashboard_mailbox_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_dashboard_time.cpp src/dashboard_time.cpp \
+		-o $(NATIVE_BUILD)/dashboard_time_test
+	$(NATIVE_BUILD)/dashboard_time_test
 
 tools-test:
 	$(PYTHON) -m unittest discover -s tools/tests -v

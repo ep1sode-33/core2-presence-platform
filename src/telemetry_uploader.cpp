@@ -14,6 +14,7 @@
 #include <sys/time.h>
 
 #include "device_config_storage.h"
+#include "dashboard_time.h"
 #include "feedback_bundle.h"
 #include "feedback_protocol.h"
 #include "feedback_spool_name.h"
@@ -23,7 +24,7 @@
 
 namespace {
 
-constexpr char kFirmwareVersion[] = "0.6.0";
+constexpr char kFirmwareVersion[] = "0.6.1";
 constexpr char kSpoolDirectory[] = "/spool";
 constexpr char kDeadDirectory[] = "/dead";
 constexpr char kPendingPath[] = "/spool/.pending";
@@ -890,7 +891,8 @@ class UploaderWorker {
       return;
     }
     if (!sntpStarted_) {
-      configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+      configTzTime(kDashboardEasternTimeZone, "pool.ntp.org",
+                   "time.cloudflare.com");
       sntpStarted_ = true;
     }
     if (esp_sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED) {
@@ -909,6 +911,9 @@ class UploaderWorker {
     anchorUtcMs_ = static_cast<uint64_t>(currentTime.tv_sec) * 1000ULL +
                    static_cast<uint64_t>(currentTime.tv_usec) / 1000ULL;
     hasClockAnchor_ = true;
+    if (workerDashboardMailbox != nullptr) {
+      workerDashboardMailbox->markClockSynchronized();
+    }
     Serial.printf("EVENT,clock,anchored,%llu\n",
                   static_cast<unsigned long long>(anchorUptimeMs_));
   }

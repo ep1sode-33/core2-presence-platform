@@ -103,6 +103,15 @@ void DashboardMailbox::recordWeatherFailure(uint64_t lastAttemptUptimeMs) {
   unlock();
 }
 
+void DashboardMailbox::markClockSynchronized() {
+  lock();
+  if (!snapshot_.clockSynchronized) {
+    snapshot_.clockSynchronized = true;
+    markChangedLocked();
+  }
+  unlock();
+}
+
 DashboardSnapshot DashboardMailbox::snapshot() const {
   DashboardSnapshot result = {};
   copySnapshot(&result);

@@ -26,15 +26,15 @@ struct EnvironmentReading {
 
 struct WeatherReading {
   bool valid;
-  float currentTemperatureF;
+  float currentTemperatureC;
   float currentHumidityPct;
-  float apparentTemperatureF;
+  float apparentTemperatureC;
   uint8_t currentWeatherCode;
   char currentTime[kDashboardTimestampCapacity];
   char forecastDate[kDashboardDateCapacity];
   uint8_t forecastWeatherCode;
-  float temperatureMaxF;
-  float temperatureMinF;
+  float temperatureMaxC;
+  float temperatureMinC;
   float precipitationProbabilityMaxPct;
   float rainSumIn;
   float showersSumIn;

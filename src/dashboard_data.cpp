@@ -10,8 +10,6 @@ namespace {
 constexpr size_t kMaximumJsonNesting = 32;
 constexpr double kMinimumTemperatureC = -100.0;
 constexpr double kMaximumTemperatureC = 100.0;
-constexpr double kMinimumTemperatureF = -150.0;
-constexpr double kMaximumTemperatureF = 160.0;
 constexpr double kMinimumHumidityPct = 0.0;
 constexpr double kMaximumHumidityPct = 100.0;
 constexpr double kMinimumPressureHpa = 300.0;
@@ -302,18 +300,18 @@ class DashboardJsonParser {
                                  sizeof(reading.currentTime));
     }
     if (bit == (1U << 1U)) {
-      return parseBoundedFloat(reading.currentTemperatureF,
-                               kMinimumTemperatureF,
-                               kMaximumTemperatureF);
+      return parseBoundedFloat(reading.currentTemperatureC,
+                               kMinimumTemperatureC,
+                               kMaximumTemperatureC);
     }
     if (bit == (1U << 2U)) {
       return parseBoundedFloat(reading.currentHumidityPct,
                                kMinimumHumidityPct, kMaximumHumidityPct);
     }
     if (bit == (1U << 3U)) {
-      return parseBoundedFloat(reading.apparentTemperatureF,
-                               kMinimumTemperatureF,
-                               kMaximumTemperatureF);
+      return parseBoundedFloat(reading.apparentTemperatureC,
+                               kMinimumTemperatureC,
+                               kMaximumTemperatureC);
     }
     return parseBoundedUint8(reading.currentWeatherCode,
                              kMinimumWeatherCode, kMaximumWeatherCode);
@@ -387,12 +385,12 @@ class DashboardJsonParser {
                              kMinimumWeatherCode, kMaximumWeatherCode);
     }
     if (bit == (1U << 2U)) {
-      return parseFirstFloat(reading.temperatureMaxF,
-                             kMinimumTemperatureF, kMaximumTemperatureF);
+      return parseFirstFloat(reading.temperatureMaxC,
+                             kMinimumTemperatureC, kMaximumTemperatureC);
     }
     if (bit == (1U << 3U)) {
-      return parseFirstFloat(reading.temperatureMinF,
-                             kMinimumTemperatureF, kMaximumTemperatureF);
+      return parseFirstFloat(reading.temperatureMinC,
+                             kMinimumTemperatureC, kMaximumTemperatureC);
     }
     if (bit == (1U << 4U)) {
       return parseFirstFloat(reading.precipitationProbabilityMaxPct,
