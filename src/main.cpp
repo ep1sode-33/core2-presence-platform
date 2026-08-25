@@ -29,6 +29,7 @@ constexpr gpio_num_t kPirPin = GPIO_NUM_36;
 constexpr uint64_t kCalibrationMs = 5000;
 constexpr uint64_t kDisplayMinimumIntervalMs = 50;
 constexpr uint64_t kDisplayHeartbeatMs = 60 * 1000;
+constexpr int32_t kDashboardHeaderHeight = 32;
 constexpr uint64_t kSerialIntervalMs = 250;
 constexpr uint64_t kProvisioningChallengeLifetimeMs = 2 * 60 * 1000;
 constexpr uint64_t kProvisioningRestartDelayMs = 750;
@@ -60,6 +61,7 @@ int16_t micSamples[kMicSamples] = {};
 uint16_t micProbeRaw = 0;
 uint16_t micLastValidRaw = 2048;
 M5Canvas displayFrame(&M5.Display);
+M5Canvas displayHeaderFrame(&M5.Display);
 RuntimeIdentity runtimeIdentity;
 TelemetryQueue telemetryQueue;
 TouchFeedbackQueue touchFeedbackQueue;
@@ -67,7 +69,7 @@ DeviceConfigMailbox configMailbox;
 DashboardMailbox dashboardMailbox;
 DashboardSnapshot dashboardSnapshot = {};
 time_t dashboardClockSeconds = 0;
-int64_t dashboardClockMinuteToken = std::numeric_limits<int64_t>::min();
+int64_t dashboardClockSecondToken = std::numeric_limits<int64_t>::min();
 PresenceConfig activeConfig = defaultPresenceConfig();
 
 PresenceState state = PresenceState::kCalibrating;
@@ -76,6 +78,7 @@ uint64_t stateSinceMs = 0;
 uint64_t lastPirMs = 0;
 uint64_t lastSoundMs = 0;
 uint64_t lastDisplayMs = 0;
+uint64_t lastFullDisplayMs = 0;
 uint64_t lastSerialMs = 0;
 uint64_t lastTelemetrySampleMs = 0;
 uint64_t nextTelemetrySeq = 0;
@@ -96,7 +99,9 @@ bool baseImuDetected = false;
 bool micBeginOk = false;
 bool micEnvelopeInitialized = false;
 bool displayFrameReady = false;
+bool displayHeaderFrameReady = false;
 bool displayDirty = true;
+bool displayHeaderDirty = true;
 bool deviceSettingsConfigured = false;
 bool provisioningChallengeActive = false;
 bool provisioningLineOverflow = false;
@@ -716,30 +721,10 @@ const char* weatherCondition(uint8_t code) {
   return "Weather";
 }
 
-void formatFeedAge(char* output, size_t capacity, uint64_t now,
-                   uint64_t fetchedAtUptimeMs) {
-  if (output == nullptr || capacity == 0) {
-    return;
-  }
-  if (fetchedAtUptimeMs == 0 || now < fetchedAtUptimeMs) {
-    std::snprintf(output, capacity, "--");
-    return;
-  }
-  const uint64_t seconds = (now - fetchedAtUptimeMs) / 1000;
-  if (seconds < 60) {
-    std::snprintf(output, capacity, "%" PRIu64 "s", seconds);
-  } else if (seconds < 60 * 60) {
-    std::snprintf(output, capacity, "%" PRIu64 "m", seconds / 60);
-  } else {
-    std::snprintf(output, capacity, "%" PRIu64 "h", seconds / (60 * 60));
-  }
-}
-
 template <typename Canvas>
-void drawDashboard(Canvas& canvas, uint64_t now) {
-  canvas.fillScreen(TFT_BLACK);
+void drawDashboardHeader(Canvas& canvas) {
+  canvas.fillRect(0, 0, canvas.width(), kDashboardHeaderHeight, TFT_BLACK);
   canvas.setTextDatum(top_left);
-
   canvas.setTextSize(2);
   canvas.setTextColor(TFT_CYAN, TFT_BLACK);
   canvas.drawString("BLACKSBURG", 8, 3);
@@ -758,6 +743,12 @@ void drawDashboard(Canvas& canvas, uint64_t now) {
   canvas.drawString(dateTime, 160, 24);
   canvas.setTextDatum(top_left);
   canvas.drawFastHLine(8, 31, 304, TFT_DARKGREY);
+}
+
+template <typename Canvas>
+void drawDashboard(Canvas& canvas, uint64_t now) {
+  canvas.fillScreen(TFT_BLACK);
+  drawDashboardHeader(canvas);
 
   canvas.drawRoundRect(6, 36, 151, 134, 7, TFT_DARKGREY);
   canvas.setTextSize(1);
@@ -826,9 +817,6 @@ void drawDashboard(Canvas& canvas, uint64_t now) {
     std::snprintf(value, sizeof(value), "Pressure %.0f hPa",
                   environment.pressureHpa);
     canvas.drawString(value, 170, 128);
-    std::snprintf(value, sizeof(value), "Sensor %.1fC",
-                  environment.qmpTemperatureC);
-    canvas.drawString(value, 170, 147);
   } else {
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
@@ -841,12 +829,16 @@ void drawDashboard(Canvas& canvas, uint64_t now) {
     canvas.drawString("Waiting for devb", 170, 110);
   }
 
-  char weatherAge[16] = {};
-  char environmentAge[16] = {};
-  formatFeedAge(weatherAge, sizeof(weatherAge), now,
-                dashboardSnapshot.weatherHealth.fetchedAtUptimeMs);
-  formatFeedAge(environmentAge, sizeof(environmentAge), now,
-                dashboardSnapshot.environmentHealth.fetchedAtUptimeMs);
+  char weatherAge[24] = {};
+  char environmentAge[24] = {};
+  formatDashboardFeedFreshness(
+      dashboardSnapshot.weather.valid, now,
+      dashboardSnapshot.weatherHealth.fetchedAtUptimeMs, weatherAge,
+      sizeof(weatherAge));
+  formatDashboardFeedFreshness(
+      dashboardSnapshot.environment.valid, now,
+      dashboardSnapshot.environmentHealth.fetchedAtUptimeMs, environmentAge,
+      sizeof(environmentAge));
   canvas.setTextSize(1);
   canvas.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   char footer[64] = {};
@@ -858,7 +850,8 @@ void drawDashboard(Canvas& canvas, uint64_t now) {
                   dashboardSnapshot.weather.snowfallSumIn);
     canvas.drawString(footer, 8, 176);
   }
-  std::snprintf(footer, sizeof(footer), "Open-Meteo %s  |  room %s",
+  std::snprintf(footer, sizeof(footer),
+                "Fetched: Open-Meteo %s | Room %s",
                 weatherAge, environmentAge);
   canvas.drawString(footer, 8, 193);
 
@@ -887,19 +880,19 @@ void refreshDashboardSnapshot() {
 
 void refreshDashboardClock() {
   time_t currentSeconds = 0;
-  int64_t minuteToken = -1;
+  int64_t secondToken = -1;
   if (dashboardSnapshot.clockSynchronized) {
     currentSeconds = std::time(nullptr);
     if (currentSeconds >= kMinimumDashboardEpochSeconds) {
-      minuteToken = static_cast<int64_t>(currentSeconds) / 60;
+      secondToken = static_cast<int64_t>(currentSeconds);
     }
   }
-  if (minuteToken == dashboardClockMinuteToken) {
+  if (secondToken == dashboardClockSecondToken) {
     return;
   }
-  dashboardClockMinuteToken = minuteToken;
-  dashboardClockSeconds = minuteToken >= 0 ? currentSeconds : 0;
-  displayDirty = true;
+  dashboardClockSecondToken = secondToken;
+  dashboardClockSeconds = secondToken >= 0 ? currentSeconds : 0;
+  displayHeaderDirty = true;
 }
 
 void drawDisplay(uint64_t now) {
@@ -915,19 +908,37 @@ void drawDisplay(uint64_t now) {
     provisioningBrightnessOverride = false;
     restoreStateBrightness();
   }
-  const bool heartbeatDue = now - lastDisplayMs >= kDisplayHeartbeatMs;
-  if (currentBrightness == 0 || (!displayDirty && !heartbeatDue) ||
+  const bool heartbeatDue = now - lastFullDisplayMs >= kDisplayHeartbeatMs;
+  const bool fullRedraw = displayDirty || heartbeatDue;
+  if (currentBrightness == 0 || (!fullRedraw && !displayHeaderDirty) ||
       now - lastDisplayMs < kDisplayMinimumIntervalMs) {
     return;
   }
   lastDisplayMs = now;
 
+  if (!fullRedraw) {
+    if (displayHeaderFrameReady) {
+      drawDashboardHeader(displayHeaderFrame);
+      M5.Display.startWrite();
+      displayHeaderFrame.pushSprite(0, 0);
+      M5.Display.endWrite();
+    } else {
+      M5.Display.startWrite();
+      drawDashboardHeader(M5.Display);
+      M5.Display.endWrite();
+    }
+    displayHeaderDirty = false;
+    return;
+  }
+
+  lastFullDisplayMs = now;
   if (!displayFrameReady) {
     drawDashboard(M5.Display, now);
     if (provisioningChallengeActive) {
       drawProvisioningOverlay(M5.Display);
     }
     displayDirty = false;
+    displayHeaderDirty = false;
     return;
   }
 
@@ -941,6 +952,7 @@ void drawDisplay(uint64_t now) {
   displayFrame.pushSprite(0, 0);
   M5.Display.endWrite();
   displayDirty = false;
+  displayHeaderDirty = false;
 }
 
 void printSerial(uint64_t now) {
@@ -973,6 +985,10 @@ void setup() {
   M5.Display.setRotation(1);
   M5.Display.setTextWrap(false);
   ensureDisplayAwake();
+  displayHeaderFrame.setPsram(false);
+  displayHeaderFrame.setColorDepth(8);
+  displayHeaderFrameReady = displayHeaderFrame.createSprite(
+      M5.Display.width(), kDashboardHeaderHeight);
   displayFrame.setPsram(false);
   displayFrame.setColorDepth(8);
   displayFrameReady =
@@ -1033,7 +1049,7 @@ void setup() {
                     PresenceState::kCalibrating, TransitionReason::kBoot,
                     bootMs);
 
-  Serial.println("M5GO Presence Lab v0.6.1");
+  Serial.println("M5GO Presence Lab v0.6.2");
   Serial.printf("IDENTITY,device_id,%s,boot_id,%s,valid,%d\n",
                 runtimeIdentity.deviceId, runtimeIdentity.bootId,
                 runtimeIdentity.deviceIdValid ? 1 : 0);
@@ -1044,14 +1060,15 @@ void setup() {
       "DEVICE,pir_gpio,%d,tmos_0x5a,%d,mic_started,%d,mic_gpio,34,"
       "mic_probe,%u,driver,adc1_poll,base_imu,%d,board,%d,pmic,%d,"
       "input_mode,buttons,button_gpio,A39_B38_C37,display,%dx%d,"
-      "frame_buffer,%d,psram,%u\n",
+      "frame_buffer,%d,header_buffer,%d,psram,%u\n",
                 static_cast<int>(kPirPin), tmosDetected ? 1 : 0,
                 micBeginOk ? 1 : 0, static_cast<unsigned>(micProbeRaw),
                 baseImuDetected ? 1 : 0,
                 static_cast<int>(M5.getBoard()),
                 static_cast<int>(M5.Power.getType()),
                 M5.Display.width(), M5.Display.height(),
-                displayFrameReady ? 1 : 0, ESP.getPsramSize());
+                displayFrameReady ? 1 : 0,
+                displayHeaderFrameReady ? 1 : 0, ESP.getPsramSize());
   Serial.println(
       "CSV,type,ms,pir,mic_rms,mic_envelope,mic_min,mic_max,noise,"
       "threshold,sound,state,brightness");

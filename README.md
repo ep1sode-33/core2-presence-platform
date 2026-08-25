@@ -159,7 +159,11 @@ values. Network or parse failures likewise preserve the last successful
 snapshot. Rain and snow remain distinct forecast fields. Weather data is
 provided by [Open-Meteo](https://open-meteo.com/). All room and forecast
 temperatures are displayed in Celsius. The header clock is synchronized by
-SNTP and rendered in Eastern time with automatic EST/EDT daylight transitions.
+SNTP and rendered to the second in Eastern time with automatic EST/EDT
+daylight transitions. Only the 32-pixel header strip is pushed for each clock
+tick. The secondary QMP temperature remains parsed as backup data but is not
+shown. The footer ages describe the last successful HTTP fetch for each source,
+not the age of the underlying sensor observation or forecast.
 
 ## Build, flash, and monitor
 

@@ -24,7 +24,7 @@
 
 namespace {
 
-constexpr char kFirmwareVersion[] = "0.6.1";
+constexpr char kFirmwareVersion[] = "0.6.2";
 constexpr char kSpoolDirectory[] = "/spool";
 constexpr char kDeadDirectory[] = "/dead";
 constexpr char kPendingPath[] = "/spool/.pending";

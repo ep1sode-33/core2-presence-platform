@@ -27,7 +27,11 @@ Core 0 worker that owns Wi-Fi. A POD mailbox publishes complete display-data
 snapshots to the hardware loop; HTTP, JSON parsing, and retry logic never run in
 the sampling/rendering loop. Weather and room temperatures use Celsius end to
 end. The same mailbox latches successful SNTP synchronization before the main
-loop renders the clock with the POSIX `America/New_York` EST/EDT rules.
+loop renders the clock with the POSIX `America/New_York` EST/EDT rules. The
+clock uses an epoch-second equality token and a dedicated 32-pixel sprite, so
+each second updates only the header while full dashboard redraws remain tied to
+state/data changes and a recovery heartbeat. Footer ages are fetch freshness,
+not upstream observation timestamps.
 
 ## Telemetry flow
 
