@@ -1,13 +1,13 @@
-# Core2 Presence
+# M5GO Presence Platform
 
-A presence-aware desk display built around an M5Stack Core2. The firmware keeps
-the validated PIR, built-in microphone, sensor-fusion, LCD power, and
-flicker-free rendering behavior while the telemetry and networking layers are
-added in independently testable stages.
+A presence-aware desk display built around an M5Stack M5GO IoT Kit. The
+firmware combines the PORT.B PIR and M5GO Base analog microphone to control the
+LCD, displays weather and room conditions, and uploads durable telemetry for
+later calibration.
 
 ## Repository layout
 
-- `src/` and `platformio.ini`: Core2 firmware.
+- `src/` and `platformio.ini`: M5GO firmware.
 - `backend/`: FastAPI + SQLite presence telemetry service.
 - `contracts/`: versioned device/server payload schemas.
 - `docs/`: architecture and hardware invariants.
@@ -70,74 +70,94 @@ physical-presence authorization step. Do not provision through an unknown USB
 adapter or on a shared/untrusted host.
 
 The worker also fetches revisioned presence settings from the backend. A newer
-revision is validated against the Core2's fixed capacities, written to an
+revision is validated against the device's fixed capacities, written to an
 atomic two-slot NVS record, and handed to the hardware loop through a bounded
 mailbox. The loop applies the complete snapshot at one boundary and stamps all
 subsequent telemetry with that revision; the uploader never mixes revisions in
 one batch.
 
-The two bottom touch targets are human labels: `PRESENT` snapshots an
-immediate pre-touch sample as `present`, while `ABSENT` snapshots it as
-`absent`. The sample and label enter one indivisible RAM item, are persisted as
-one checksummed LittleFS bundle, and survive restart without changing identity.
-The worker acknowledges the referenced telemetry sample before it posts the
-feedback, preventing dangling labels. Touch coordinates and raw microphone
-audio are never uploaded.
+The three physical buttons are A=`PRESENT`, B=`WAKE`, and C=`ABSENT`. A and C
+snapshot an immediate pre-button sample with the human label; B only wakes the
+display. Each sample/label pair enters one indivisible RAM item, is persisted as
+one checksummed LittleFS bundle, and survives restart without changing
+identity. The worker acknowledges the referenced telemetry sample before it
+posts the feedback, preventing dangling labels. Raw microphone audio is never
+uploaded.
 
-## Expected hardware
+The v1 wire contract still calls these corrections `source=touch` and calls a
+button wake `touch_wake`. Those legacy names intentionally remain stable so the
+existing device history, backend, and idempotency keys do not split during the
+hardware-model correction.
 
-- M5Stack Core2
+## Hardware
+
+- M5Stack M5GO IoT Kit (classic M5Stack core, 16 MB flash, no PSRAM)
 - M5Stack digital PIR Unit on PORT.B (signal on GPIO36)
-- The Core2's built-in microphone
+- M5GO Base analog microphone on ADC1 GPIO34
 
 This particular sensor is validated as the digital GPIO36 PIR path. Do not
-remap ESP32 I2C controller 1 to PORT.A while using this Core2 v1.1: its internal
-AXP2101 power-management chip already uses that controller on GPIO21/22, and
-remapping it breaks LCD backlight control.
+enable an internal pull resistor on GPIO36: it is input-only and the PIR Unit
+provides its own conditioned digital output. The unused base speaker output on
+GPIO25 is held low while the microphone is sampled.
 
 ## Demo behavior
 
 - First 5 seconds: calibrate the microphone noise floor.
-- First 5 minutes: keep the diagnostic screen on for bench testing while all
-  sensor values remain live.
 - `IDLE`: screen backlight is off. Sound alone does not wake it.
 - PIR motion: immediately enter `PRESENT` and turn the screen on.
 - While present: PIR or above-baseline sound extends the on-time.
 - After both sensors are quiet: dim for 5 seconds, then turn the backlight off.
 - Sound may bridge stationary periods for at most 5 minutes after the latest
   PIR evidence, so a television or fan cannot keep the display on forever.
-- Touch the center area to wake the diagnostics screen without adding a label.
-- Touch `PRESENT` or `ABSENT` to record a pre-touch presence correction.
+- Press B to wake the screen without adding a label.
+- Press A or C to record a pre-button `PRESENT` or `ABSENT` correction.
 
 No audio is stored or transmitted. The microphone samples are reduced to a
 short-window RMS value and smoothed envelope in memory. Sound detection uses a
 slowly learned room-noise floor plus hysteresis; the default trigger is `1.12x`
 the learned floor.
 
-## Hardware validation on this Core2
+## Hardware validation on this M5GO
 
 Validated over USB serial on 2026-08-23:
 
 - The digital motion input on GPIO36 changed from `0` to `1`, entered
   `PRESENT`, and raised the LCD backlight to brightness `255`.
-- A controlled sound played near the Core2 raised the microphone envelope over
+- A controlled sound played near the M5GO Base raised the microphone envelope over
   its learned threshold and produced `sound=1`.
 - During that sound-only test the state remained `IDLE / SCREEN OFF`, as
   intended. PIR is still required to declare an arrival.
-- The final firmware builds and flashes successfully on the attached
-  ESP32-D0WDQ6-V3 Core2.
-- The Core2 v1.1 AXP2101 display rails stay powered after the startup splash.
-- An 8-bit full-screen canvas in PSRAM removes visible full-screen redraws; a
-  partial-update fallback remains available if allocation ever fails.
+- The firmware builds and flashes successfully for the 16 MB classic M5Stack
+  target and reports `board=1`, physical buttons, and no PSRAM.
+- A, the GPIO39 physical button, produced durable `present` feedback whose
+  evidence telemetry and feedback were both acknowledged by the backend.
+- An 8-bit full-screen canvas in internal RAM removes visible partial redraws;
+  a low-memory partial-update fallback remains available.
 
-M5Unified 0.2.19's asynchronous microphone path returned a constant value on
-this board during the first hardware test. The demo therefore uses the ESP32's
-raw PDM I2S receiver directly on Core2 microphone clock GPIO0 and data GPIO34.
-This path produced a repeatable sound event in the controlled test.
+M5Unified 0.2.19's I2S ADC compatibility path returned a constant value and
+blocked for roughly half a second on this runtime. The firmware therefore polls
+the M5GO Base microphone directly through ADC1 GPIO34 at 8 kHz in 128-sample
+windows. This path remains live with Wi-Fi enabled and produced repeatable
+sound events in the controlled test.
 
 The microphone is deliberately treated as weak supporting evidence rather than
 a second occupancy sensor: it can extend a PIR-confirmed presence window but it
 cannot wake the display on its own.
+
+## Display data
+
+The production dashboard reads two low-frequency sources in the existing Core
+0 network worker; sensor sampling and drawing never perform HTTP or JSON work:
+
+- Room conditions every 30 seconds from
+  `http://192.168.0.46:8080/v1/metrics`.
+- Current and daily Blacksburg weather about every 15 minutes from Open-Meteo,
+  using `37.2296,-80.4139`.
+
+The room API's `OUT_DATED` status is shown as stale while preserving its last
+values. Network or parse failures likewise preserve the last successful
+snapshot. Rain and snow remain distinct forecast fields. Weather data is
+provided by [Open-Meteo](https://open-meteo.com/).
 
 ## Build, flash, and monitor
 
@@ -164,7 +184,8 @@ starting a second sampler process.
 
 ## Existing firmware backup
 
-Before this demo was flashed, the original 4MB used region was saved as:
+Before this project firmware was flashed, the original 4MB used region was
+saved under a legacy filename created before the hardware was identified:
 
 ```text
 backups/core2-original-20260823.bin

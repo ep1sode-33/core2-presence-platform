@@ -66,6 +66,14 @@ firmware-unit:
 		test/native/test_feedback_bundle.cpp src/feedback_bundle.cpp \
 		-o $(NATIVE_BUILD)/feedback_bundle_test
 	$(NATIVE_BUILD)/feedback_bundle_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_dashboard_data.cpp src/dashboard_data.cpp \
+		-o $(NATIVE_BUILD)/dashboard_data_test
+	$(NATIVE_BUILD)/dashboard_data_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -pthread -Isrc \
+		test/native/test_dashboard_mailbox.cpp src/dashboard_mailbox.cpp \
+		-o $(NATIVE_BUILD)/dashboard_mailbox_test
+	$(NATIVE_BUILD)/dashboard_mailbox_test
 
 tools-test:
 	$(PYTHON) -m unittest discover -s tools/tests -v

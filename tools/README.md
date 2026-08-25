@@ -1,8 +1,11 @@
-# Core2 USB provisioning
+# M5GO USB provisioning
 
-`provision_core2.py` writes Wi-Fi and backend credentials over the Core2 USB
+`provision_core2.py` writes Wi-Fi and backend credentials over the M5GO USB
 serial connection. It automatically looks for
 `usbserial-588D0027491`; use `--port` to override that choice.
+
+The script keeps its original filename for compatibility with existing setup
+commands.
 
 Install the only runtime dependency outside the repository, then run:
 
@@ -20,7 +23,7 @@ authentication does not encrypt the token.
 
 Provision only from a trusted computer through a trusted USB serial adapter.
 The current challenge correlates one fresh transaction but does not authorize
-it with a physical touch, so another local process with serial access is inside
+it with a physical-button confirmation, so another local process with serial access is inside
 this release's trust boundary.
 
 For non-interactive use, `--secrets-stdin` accepts exactly two lines: the Wi-Fi

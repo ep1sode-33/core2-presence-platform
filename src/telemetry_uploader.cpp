@@ -9,6 +9,7 @@
 #include <esp_system.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
 #include <sys/time.h>
 
@@ -22,7 +23,7 @@
 
 namespace {
 
-constexpr char kFirmwareVersion[] = "0.4.0";
+constexpr char kFirmwareVersion[] = "0.6.0";
 constexpr char kSpoolDirectory[] = "/spool";
 constexpr char kDeadDirectory[] = "/dead";
 constexpr char kPendingPath[] = "/spool/.pending";
@@ -39,8 +40,15 @@ constexpr uint64_t kWifiRetryMs = 30000;
 constexpr uint64_t kConfigPollIntervalMs = 5 * 60 * 1000;
 constexpr uint64_t kConfigRetryMs = 30000;
 constexpr uint64_t kMaximumBackoffMs = 5 * 60 * 1000;
+constexpr uint64_t kMinimumEnvironmentPollIntervalMs = 30 * 1000;
+constexpr uint64_t kMinimumWeatherPollIntervalMs = 15 * 60 * 1000;
+constexpr uint64_t kEnvironmentRetryMs = 30 * 1000;
+constexpr uint64_t kWeatherRetryMs = 60 * 1000;
+constexpr uint64_t kMaximumDashboardDeferralMs = 30 * 1000;
 constexpr size_t kMaximumAckBytes = 2048;
 constexpr size_t kMaximumConfigResponseBytes = 2048;
+constexpr size_t kMaximumEnvironmentResponseBytes = 1024;
+constexpr size_t kMaximumWeatherResponseBytes = 4096;
 constexpr time_t kMinimumTrustedUtcSeconds = 1700000000;
 constexpr int kHttpConflict = 409;
 constexpr int kHttpUnprocessableEntity = 422;
@@ -50,7 +58,13 @@ TelemetryUploaderSettings workerSettings;
 TelemetryQueue* workerQueue = nullptr;
 DeviceConfigMailbox* workerConfigMailbox = nullptr;
 TouchFeedbackQueue* workerTouchFeedbackQueue = nullptr;
+DashboardMailbox* workerDashboardMailbox = nullptr;
 TaskHandle_t workerTaskHandle = nullptr;
+
+// Both dashboard sources are fetched serially by the sole uploader worker, so
+// they can safely share one fixed response buffer without consuming task stack
+// or fragmenting the heap. The extra byte is reserved for the parser's NUL.
+char dashboardResponseBytes[kMaximumWeatherResponseBytes + 1] = {};
 
 enum class FeedbackBundleLoadResult : uint8_t {
   kOk,
@@ -58,6 +72,64 @@ enum class FeedbackBundleLoadResult : uint8_t {
   kSizeOutOfRange,
   kReadFailed,
   kInvalidFrame,
+};
+
+enum class DashboardFetchResult : uint8_t {
+  kOk,
+  kInvalidUrl,
+  kBeginFailed,
+  kHttpStatus,
+  kTooLarge,
+  kTransferFailed,
+  kTruncated,
+};
+
+struct DashboardHttpResponse {
+  DashboardFetchResult result = DashboardFetchResult::kTransferFailed;
+  int httpStatus = 0;
+  int transferResult = 0;
+  size_t bodySize = 0;
+};
+
+class FixedCapacityStream final : public Stream {
+ public:
+  FixedCapacityStream(uint8_t* bytes, size_t capacity)
+      : bytes_(bytes), capacity_(capacity) {}
+
+  using Print::write;
+
+  size_t write(uint8_t value) override {
+    return write(&value, 1);
+  }
+
+  size_t write(const uint8_t* bytes, size_t size) override {
+    if (bytes_ == nullptr || bytes == nullptr || size > capacity_ - size_) {
+      overflowed_ = true;
+      return 0;
+    }
+    std::memcpy(bytes_ + size_, bytes, size);
+    size_ += size;
+    return size;
+  }
+
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  int availableForWrite() override {
+    const size_t remaining = capacity_ - size_;
+    return remaining > static_cast<size_t>(INT_MAX)
+               ? INT_MAX
+               : static_cast<int>(remaining);
+  }
+
+  size_t size() const { return size_; }
+  bool overflowed() const { return overflowed_; }
+
+ private:
+  uint8_t* bytes_ = nullptr;
+  size_t capacity_ = 0;
+  size_t size_ = 0;
+  bool overflowed_ = false;
 };
 
 class UploaderWorker {
@@ -86,7 +158,14 @@ class UploaderWorker {
                   static_cast<unsigned>(feedbackReadyCount_),
                   static_cast<unsigned>(deadCount_));
 
-    if (workerSettings.configured) {
+    const bool networkRequested =
+        workerSettings.configured || workerSettings.environmentEnabled ||
+        workerSettings.weatherEnabled;
+    wifiAvailable_ =
+        networkRequested && workerSettings.wifiSsid[0] != '\0' &&
+        std::memchr(workerSettings.wifiSsid, '\0',
+                    sizeof(workerSettings.wifiSsid)) != nullptr;
+    if (wifiAvailable_) {
       WiFi.persistent(false);
       WiFi.mode(WIFI_STA);
       WiFi.setAutoReconnect(true);
@@ -102,16 +181,29 @@ class UploaderWorker {
       synchronizeAppliedConfig(now);
       freezeQueueIfNeeded(now);
       freezeFeedbackQueueIfNeeded();
-      if (workerSettings.configured && !operatorHalted_) {
+      if (wifiAvailable_) {
         maintainWifi(now);
         captureClockAnchor();
-        if (WiFi.status() == WL_CONNECTED &&
-            now >= nextConfigPollMs_ && !configAwaitingApply_) {
-          pollRemoteConfig(now);
-        }
-        if (!operatorHalted_ && WiFi.status() == WL_CONNECTED &&
-            now >= nextUploadMs_ && !conflictAwaitingConfigValidation()) {
-          uploadOneEnvelope(now);
+        if (WiFi.status() == WL_CONNECTED) {
+          bool presenceRequestAttempted = false;
+          const bool dashboardMustPreempt =
+              dashboardSourceMustPreempt(now);
+          if (workerSettings.configured && !operatorHalted_) {
+            if (now >= nextConfigPollMs_ && !configAwaitingApply_) {
+              pollRemoteConfig(now);
+            }
+            if (!dashboardMustPreempt && !operatorHalted_ &&
+                now >= nextUploadMs_ &&
+                !conflictAwaitingConfigValidation()) {
+              presenceRequestAttempted = uploadOneEnvelope(now);
+            }
+          }
+          // Presence traffic normally wins. Each dashboard source still gets
+          // one prompt first attempt, and once due can be deferred by backlog
+          // for at most 30 seconds before it preempts one upload iteration.
+          if (dashboardMustPreempt || !presenceRequestAttempted) {
+            fetchOneDashboardSource(now);
+          }
         }
       }
       vTaskDelay(pdMS_TO_TICKS(250));
@@ -139,6 +231,226 @@ class UploaderWorker {
     std::memcpy(sink->bytes + sink->size, data, size);
     sink->size += size;
     return true;
+  }
+
+  static bool isExplicitHttpUrl(const char* url, size_t capacity) {
+    if (url == nullptr || capacity < 8 ||
+        std::memchr(url, '\0', capacity) == nullptr) {
+      return false;
+    }
+    return std::strncmp(url, "http://", 7) == 0 && url[7] != '\0';
+  }
+
+  static const char* dashboardFetchResultName(DashboardFetchResult result) {
+    switch (result) {
+      case DashboardFetchResult::kOk:
+        return "ok";
+      case DashboardFetchResult::kInvalidUrl:
+        return "url";
+      case DashboardFetchResult::kBeginFailed:
+        return "begin";
+      case DashboardFetchResult::kHttpStatus:
+        return "http";
+      case DashboardFetchResult::kTooLarge:
+        return "too_large";
+      case DashboardFetchResult::kTransferFailed:
+        return "transfer";
+      case DashboardFetchResult::kTruncated:
+        return "truncated";
+    }
+    return "unknown";
+  }
+
+  static DashboardHttpResponse fetchDashboardJson(const char* url,
+                                                  size_t urlCapacity,
+                                                  size_t bodyCapacity) {
+    DashboardHttpResponse response = {};
+    if (!isExplicitHttpUrl(url, urlCapacity) || bodyCapacity == 0 ||
+        bodyCapacity > kMaximumWeatherResponseBytes) {
+      response.result = DashboardFetchResult::kInvalidUrl;
+      return response;
+    }
+
+    dashboardResponseBytes[0] = '\0';
+    WiFiClient client;
+    HTTPClient http;
+    http.setConnectTimeout(3000);
+    http.setTimeout(5000);
+    http.setReuse(false);
+    // Keep HTTP/1.1 enabled: Open-Meteo may use chunked transfer encoding,
+    // which writeToStream validates through the terminating zero-size chunk.
+    http.useHTTP10(false);
+    if (!http.begin(client, url)) {
+      response.result = DashboardFetchResult::kBeginFailed;
+      return response;
+    }
+    http.addHeader("Accept", "application/json");
+    response.httpStatus = http.GET();
+    if (response.httpStatus != HTTP_CODE_OK) {
+      response.result = DashboardFetchResult::kHttpStatus;
+      http.end();
+      return response;
+    }
+
+    const int declaredSize = http.getSize();
+    if (declaredSize > static_cast<int>(bodyCapacity)) {
+      response.result = DashboardFetchResult::kTooLarge;
+      http.end();
+      return response;
+    }
+
+    FixedCapacityStream sink(
+        reinterpret_cast<uint8_t*>(dashboardResponseBytes), bodyCapacity);
+    response.transferResult = http.writeToStream(&sink);
+    const int completedSize = http.getSize();
+    http.end();
+    response.bodySize = sink.size();
+    if (sink.overflowed() || response.bodySize > bodyCapacity) {
+      response.result = DashboardFetchResult::kTooLarge;
+      return response;
+    }
+    if (response.transferResult < 0) {
+      response.result = DashboardFetchResult::kTransferFailed;
+      return response;
+    }
+    if (response.bodySize != static_cast<size_t>(response.transferResult) ||
+        (declaredSize >= 0 && response.transferResult != declaredSize) ||
+        (completedSize >= 0 && response.transferResult != completedSize)) {
+      response.result = DashboardFetchResult::kTruncated;
+      return response;
+    }
+
+    dashboardResponseBytes[response.bodySize] = '\0';
+    response.result = DashboardFetchResult::kOk;
+    return response;
+  }
+
+  static void logDashboardHttpFailure(
+      const char* source, const DashboardHttpResponse& response) {
+    if (response.result == DashboardFetchResult::kHttpStatus) {
+      Serial.printf("EVENT,dashboard,%s,fail,http,%d\n", source,
+                    response.httpStatus);
+      return;
+    }
+    if (response.result == DashboardFetchResult::kTransferFailed) {
+      Serial.printf("EVENT,dashboard,%s,fail,transfer,%d\n", source,
+                    response.transferResult);
+      return;
+    }
+    Serial.printf("EVENT,dashboard,%s,fail,%s\n", source,
+                  dashboardFetchResultName(response.result));
+  }
+
+  void fetchEnvironment(uint64_t attemptMs) {
+    const DashboardHttpResponse response = fetchDashboardJson(
+        workerSettings.environmentUrl, sizeof(workerSettings.environmentUrl),
+        kMaximumEnvironmentResponseBytes);
+    const uint64_t completedMs = monotonicMillis();
+    if (response.result != DashboardFetchResult::kOk) {
+      workerDashboardMailbox->recordEnvironmentFailure(attemptMs);
+      nextEnvironmentFetchMs_ = completedMs + kEnvironmentRetryMs;
+      logDashboardHttpFailure("environment", response);
+      return;
+    }
+
+    const EnvironmentParseResult parsed = parseEnvironmentReading(
+        dashboardResponseBytes, response.bodySize);
+    if (!parsed.ok()) {
+      workerDashboardMailbox->recordEnvironmentFailure(attemptMs);
+      nextEnvironmentFetchMs_ = completedMs + kEnvironmentRetryMs;
+      Serial.printf("EVENT,dashboard,environment,fail,parse,%s\n",
+                    dashboardParseErrorName(parsed.error));
+      return;
+    }
+    if (!workerDashboardMailbox->publishEnvironment(
+            parsed.reading, completedMs, attemptMs)) {
+      nextEnvironmentFetchMs_ = completedMs + kEnvironmentRetryMs;
+      Serial.println("EVENT,dashboard,environment,fail,publish");
+      return;
+    }
+
+    const uint64_t interval = std::max<uint64_t>(
+        workerSettings.environmentPollIntervalMs,
+        kMinimumEnvironmentPollIntervalMs);
+    nextEnvironmentFetchMs_ = completedMs + interval;
+    Serial.printf("EVENT,dashboard,environment,ok,%u\n",
+                  static_cast<unsigned>(response.bodySize));
+  }
+
+  void fetchWeather(uint64_t attemptMs) {
+    const DashboardHttpResponse response = fetchDashboardJson(
+        workerSettings.weatherUrl, sizeof(workerSettings.weatherUrl),
+        kMaximumWeatherResponseBytes);
+    const uint64_t completedMs = monotonicMillis();
+    if (response.result != DashboardFetchResult::kOk) {
+      workerDashboardMailbox->recordWeatherFailure(attemptMs);
+      nextWeatherFetchMs_ = completedMs + kWeatherRetryMs;
+      logDashboardHttpFailure("weather", response);
+      return;
+    }
+
+    const WeatherParseResult parsed =
+        parseWeatherReading(dashboardResponseBytes, response.bodySize);
+    if (!parsed.ok()) {
+      workerDashboardMailbox->recordWeatherFailure(attemptMs);
+      nextWeatherFetchMs_ = completedMs + kWeatherRetryMs;
+      Serial.printf("EVENT,dashboard,weather,fail,parse,%s\n",
+                    dashboardParseErrorName(parsed.error));
+      return;
+    }
+    if (!workerDashboardMailbox->publishWeather(parsed.reading, completedMs,
+                                                attemptMs)) {
+      nextWeatherFetchMs_ = completedMs + kWeatherRetryMs;
+      Serial.println("EVENT,dashboard,weather,fail,publish");
+      return;
+    }
+
+    const uint64_t interval = std::max<uint64_t>(
+        workerSettings.weatherPollIntervalMs,
+        kMinimumWeatherPollIntervalMs);
+    nextWeatherFetchMs_ = completedMs + interval;
+    Serial.printf("EVENT,dashboard,weather,ok,%u\n",
+                  static_cast<unsigned>(response.bodySize));
+  }
+
+  bool fetchOneDashboardSource(uint64_t now) {
+    if (workerDashboardMailbox == nullptr) {
+      return false;
+    }
+    if (workerSettings.environmentEnabled &&
+        now >= nextEnvironmentFetchMs_) {
+      environmentFetchAttempted_ = true;
+      fetchEnvironment(now);
+      return true;
+    }
+    if (workerSettings.weatherEnabled && now >= nextWeatherFetchMs_) {
+      weatherFetchAttempted_ = true;
+      fetchWeather(now);
+      return true;
+    }
+    return false;
+  }
+
+  bool dashboardSourceMustPreempt(uint64_t now) const {
+    if (workerSettings.environmentEnabled) {
+      if (!environmentFetchAttempted_) {
+        return true;
+      }
+      if (now >= nextEnvironmentFetchMs_ &&
+          now - nextEnvironmentFetchMs_ >= kMaximumDashboardDeferralMs) {
+        return true;
+      }
+    }
+    if (workerSettings.weatherEnabled) {
+      if (!weatherFetchAttempted_) {
+        return true;
+      }
+      if (now >= nextWeatherFetchMs_ &&
+          now - nextWeatherFetchMs_ >= kMaximumDashboardDeferralMs) {
+        return true;
+      }
+    }
+    return false;
   }
 
   static bool setFilesystemInitializedFlag() {
@@ -1273,19 +1585,20 @@ class UploaderWorker {
     return true;
   }
 
-  void uploadOneEnvelope(uint64_t now) {
+  bool uploadOneEnvelope(uint64_t now) {
     // Complete already-acknowledged corrections first, then advance new
     // corrections to ready, and only then drain ordinary telemetry.
     if (uploadOneFeedbackReady(now)) {
-      return;
+      return true;
     }
     if (uploadOneFeedbackWait(now)) {
-      return;
+      return true;
     }
     if (uploadOneTelemetryEnvelope(now)) {
-      return;
+      return true;
     }
     resetBackoff(now + 1000);
+    return false;
   }
 
   size_t spoolCount_ = 0;
@@ -1296,6 +1609,8 @@ class UploaderWorker {
   uint64_t lastWifiBeginMs_ = 0;
   uint64_t nextUploadMs_ = 0;
   uint64_t nextConfigPollMs_ = 0;
+  uint64_t nextEnvironmentFetchMs_ = 0;
+  uint64_t nextWeatherFetchMs_ = 0;
   uint64_t anchorUtcMs_ = 0;
   uint64_t anchorUptimeMs_ = 0;
   PresenceConfig activeConfig_ = defaultPresenceConfig();
@@ -1310,6 +1625,9 @@ class UploaderWorker {
   bool conflictProbeActive_ = false;
   bool conflictProbeConfigValidated_ = false;
   bool operatorHalted_ = false;
+  bool wifiAvailable_ = false;
+  bool environmentFetchAttempted_ = false;
+  bool weatherFetchAttempted_ = false;
 };
 
 void uploaderTask(void*) {
@@ -1323,7 +1641,8 @@ bool startTelemetryUploader(const RuntimeIdentity& identity,
                             const TelemetryUploaderSettings& settings,
                             TelemetryQueue& queue,
                             DeviceConfigMailbox& configMailbox,
-                            TouchFeedbackQueue& touchFeedbackQueue) {
+                            TouchFeedbackQueue& touchFeedbackQueue,
+                            DashboardMailbox& dashboardMailbox) {
   if (!identity.deviceIdValid || workerTaskHandle != nullptr) {
     return false;
   }
@@ -1332,6 +1651,7 @@ bool startTelemetryUploader(const RuntimeIdentity& identity,
   workerQueue = &queue;
   workerConfigMailbox = &configMailbox;
   workerTouchFeedbackQueue = &touchFeedbackQueue;
+  workerDashboardMailbox = &dashboardMailbox;
   const BaseType_t result = xTaskCreatePinnedToCore(
       uploaderTask, "presence_upload", 12288, nullptr, 1, &workerTaskHandle, 0);
   if (result != pdPASS) {
@@ -1339,6 +1659,7 @@ bool startTelemetryUploader(const RuntimeIdentity& identity,
     workerQueue = nullptr;
     workerConfigMailbox = nullptr;
     workerTouchFeedbackQueue = nullptr;
+    workerDashboardMailbox = nullptr;
     return false;
   }
   return true;

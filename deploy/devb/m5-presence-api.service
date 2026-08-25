@@ -1,5 +1,5 @@
 [Unit]
-Description=M5 Core2 Presence API
+Description=M5GO Presence API
 After=network-online.target tailscaled.service
 Wants=network-online.target
 

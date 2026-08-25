@@ -213,7 +213,7 @@ class PresenceConfig(StrictModel):
     cooldown_ms: int = Field(strict=True, ge=0, le=600000)
     sound_factor: float = Field(strict=True, ge=1.0, le=4.0)
     telemetry_interval_ms: int = Field(strict=True, ge=250, le=60000)
-    # The current Core2 uploader deliberately serializes at most 30 records
+    # The current device uploader deliberately serializes at most 30 records
     # from a fixed-size worker buffer. Keep the server contract at the same
     # capability ceiling so a device never has to silently clamp a revision.
     upload_batch_size: int = Field(strict=True, ge=1, le=30)

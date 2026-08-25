@@ -4,13 +4,13 @@
 #include <cmath>
 #include <cstring>
 #include <inttypes.h>
-#include <driver/i2s.h>
 #include <esp_system.h>
 
 #include "device_config.h"
 #include "device_config_mailbox.h"
 #include "device_config_storage.h"
 #include "device_settings.h"
+#include "dashboard_mailbox.h"
 #include "presence_types.h"
 #include "provisioning_protocol.h"
 #include "runtime_identity.h"
@@ -20,32 +20,49 @@
 
 namespace {
 
-// M5Stack Core2 PORT.B: white wire / digital input is GPIO36.
+// M5GO PORT.B: white wire / digital input is GPIO36.
 constexpr gpio_num_t kPirPin = GPIO_NUM_36;
 
 constexpr uint64_t kCalibrationMs = 5000;
-constexpr uint64_t kBenchTestMs = 5 * 60 * 1000;
-constexpr uint64_t kDisplayIntervalMs = 150;
+constexpr uint64_t kDisplayMinimumIntervalMs = 50;
+constexpr uint64_t kDisplayHeartbeatMs = 60 * 1000;
 constexpr uint64_t kSerialIntervalMs = 250;
 constexpr uint64_t kProvisioningChallengeLifetimeMs = 2 * 60 * 1000;
 constexpr uint64_t kProvisioningRestartDelayMs = 750;
 constexpr size_t kProvisioningLineCapacity = 768;
+constexpr uint32_t kEnvironmentPollIntervalMs = 30 * 1000;
+constexpr uint32_t kWeatherPollIntervalMs = 15 * 60 * 1000;
+constexpr char kEnvironmentMetricsUrl[] =
+    "http://192.168.0.46:8080/v1/metrics";
+constexpr char kWeatherForecastUrl[] =
+    "http://api.open-meteo.com/v1/forecast?latitude=37.2296&longitude="
+    "-80.4139&current=temperature_2m,relative_humidity_2m,"
+    "apparent_temperature,weather_code&daily=weather_code,"
+    "temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
+    "rain_sum,showers_sum,snowfall_sum&temperature_unit=fahrenheit&"
+    "precipitation_unit=inch&timezone=America%2FNew_York&forecast_days=1";
 
-// Match M5Stack's original SPM1423 capture layout: 44.1 kHz and a 512-byte
-// read (256 signed 16-bit samples). The legacy ESP32 PDM peripheral is
-// sensitive to its channel/DMA layout, so these values intentionally mirror
-// the vendor example.
-constexpr size_t kMicSamples = 256;
-constexpr uint32_t kMicSampleRate = 44100;
+// The M5GO base exposes its analog microphone on ADC1 GPIO34. M5Unified
+// identifies the same input, but its I2S ADC compatibility path returns a
+// constant signal on this ESP32 Arduino runtime. Direct ADC1 sampling is
+// sufficient for an on-device energy envelope and remains usable with Wi-Fi.
+constexpr gpio_num_t kMicPin = GPIO_NUM_34;
+constexpr size_t kMicSamples = 128;
+constexpr uint32_t kMicSampleRate = 8000;
+constexpr uint32_t kMicSamplePeriodUs = 1000000 / kMicSampleRate;
 constexpr uint8_t kOnBrightness = 255;
 constexpr uint8_t kCooldownBrightness = 60;
 
 int16_t micSamples[kMicSamples] = {};
+uint16_t micProbeRaw = 0;
+uint16_t micLastValidRaw = 2048;
 M5Canvas displayFrame(&M5.Display);
 RuntimeIdentity runtimeIdentity;
 TelemetryQueue telemetryQueue;
 TouchFeedbackQueue touchFeedbackQueue;
 DeviceConfigMailbox configMailbox;
+DashboardMailbox dashboardMailbox;
+DashboardSnapshot dashboardSnapshot = {};
 PresenceConfig activeConfig = defaultPresenceConfig();
 
 PresenceState state = PresenceState::kCalibrating;
@@ -74,7 +91,7 @@ bool baseImuDetected = false;
 bool micBeginOk = false;
 bool micEnvelopeInitialized = false;
 bool displayFrameReady = false;
-bool fallbackUiInitialized = false;
+bool displayDirty = true;
 bool deviceSettingsConfigured = false;
 bool provisioningChallengeActive = false;
 bool provisioningLineOverflow = false;
@@ -110,17 +127,7 @@ void setBrightness(uint8_t brightness) {
   M5.Display.setBrightness(brightness);
 }
 
-void forceCore2DisplayPower() {
-  // Core2 v1.1 uses the AXP2101: ALDO4 powers the LCD/touch rail, ALDO2
-  // releases their reset rail, and BLDO1 drives the backlight. M5GFX normally
-  // configures all three, but make the diagnostic firmware explicit so a
-  // PMIC/autodetection mismatch cannot leave a healthy LCD looking dead.
-  if (M5.Power.getType() == m5::Power_Class::pmic_t::pmic_axp2101) {
-    M5.Power.Axp2101.setALDO4(3300);
-    M5.Power.Axp2101.setALDO2(3300);
-    M5.Power.Axp2101.setBLDO1(3300);
-  }
-
+void ensureDisplayAwake() {
   M5.Display.wakeup();
   M5.Display.powerSaveOff();
   currentBrightness = 254;
@@ -190,6 +197,7 @@ void beginProvisioningChallenge(uint64_t now) {
   provisioningChallengeExpiresMs =
       now + kProvisioningChallengeLifetimeMs;
   provisioningBrightnessOverride = true;
+  displayDirty = true;
   M5.Display.wakeup();
   M5.Display.powerSaveOff();
   setBrightness(kOnBrightness);
@@ -369,6 +377,7 @@ void enterState(PresenceState next, TransitionReason reason, uint64_t now) {
   const PresenceState previous = state;
   state = next;
   stateSinceMs = now;
+  displayDirty = true;
 
   switch (state) {
     case PresenceState::kCalibrating:
@@ -404,49 +413,15 @@ float calculateRms(const int16_t* samples, size_t count) {
   return sqrtf(static_cast<float>(squaredSum / count));
 }
 
-bool beginRawMicrophone() {
-  // Bypass M5Unified's asynchronous recorder for this hardware check. These
-  // are the Core2/SPM1423 PDM pins from M5Stack's official schematic and
-  // original I2S examples.
-  i2s_driver_uninstall(I2S_NUM_0);
-
-  i2s_config_t config = {};
-  config.mode =
-      static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM);
-  config.sample_rate = kMicSampleRate;
-  config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
-  config.channel_format = I2S_CHANNEL_FMT_ALL_RIGHT;
-  config.communication_format =
-      static_cast<i2s_comm_format_t>(I2S_COMM_FORMAT_STAND_I2S);
-  config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  config.dma_buf_count = 2;
-  config.dma_buf_len = 128;
-  config.use_apll = false;
-
-  esp_err_t result = i2s_driver_install(I2S_NUM_0, &config, 0, nullptr);
-  if (result != ESP_OK) {
-    Serial.printf("EVENT,i2s_install_error,%d\n", result);
-    return false;
+bool beginAnalogMicrophone() {
+  pinMode(kMicPin, INPUT);
+  analogReadResolution(12);
+  analogSetPinAttenuation(static_cast<uint8_t>(kMicPin), ADC_11db);
+  micProbeRaw = analogRead(static_cast<uint8_t>(kMicPin));
+  if (micProbeRaw > 0 && micProbeRaw < 4095) {
+    micLastValidRaw = micProbeRaw;
   }
-
-  i2s_pin_config_t pins = {};
-  pins.bck_io_num = I2S_PIN_NO_CHANGE;
-  pins.ws_io_num = GPIO_NUM_0;
-  pins.data_out_num = I2S_PIN_NO_CHANGE;
-  pins.data_in_num = GPIO_NUM_34;
-  result = i2s_set_pin(I2S_NUM_0, &pins);
-  if (result != ESP_OK) {
-    Serial.printf("EVENT,i2s_pin_error,%d\n", result);
-    return false;
-  }
-
-  result = i2s_set_clk(I2S_NUM_0, kMicSampleRate,
-                       I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
-  if (result != ESP_OK) {
-    Serial.printf("EVENT,i2s_clock_error,%d\n", result);
-    return false;
-  }
-  return true;
+  return micProbeRaw <= 4095;
 }
 
 void sampleMicrophone(uint64_t now) {
@@ -456,12 +431,24 @@ void sampleMicrophone(uint64_t now) {
     return;
   }
 
-  size_t bytesRead = 0;
-  const esp_err_t result =
-      i2s_read(I2S_NUM_0, micSamples, sizeof(micSamples), &bytesRead,
-               pdMS_TO_TICKS(50));
-  if (result != ESP_OK || bytesRead < sizeof(micSamples)) {
-    return;
+  uint32_t nextSampleUs = micros();
+  for (size_t i = 0; i < kMicSamples; ++i) {
+    while (static_cast<int32_t>(micros() - nextSampleUs) < 0) {
+      delayMicroseconds(8);
+    }
+    uint16_t raw = analogRead(static_cast<uint8_t>(kMicPin));
+    // The legacy ESP32 ADC occasionally returns an isolated exact rail value
+    // while Wi-Fi and the LCD are active. Hold the previous valid sample so a
+    // single conversion glitch cannot masquerade as a loud sound event.
+    if (raw == 0 || raw == 4095) {
+      raw = micLastValidRaw;
+    } else {
+      micLastValidRaw = raw;
+    }
+    const int32_t signedSample =
+        (static_cast<int32_t>(raw) - 2048) * 16;
+    micSamples[i] = static_cast<int16_t>(signedSample);
+    nextSampleUs += kMicSamplePeriodUs;
   }
 
   micMin = micSamples[0];
@@ -477,9 +464,8 @@ void sampleMicrophone(uint64_t now) {
     noiseFloor = micRms;
     micEnvelopeInitialized = true;
   } else {
-    // Fast enough to catch speech, but slow enough to reject the legacy
-    // ESP32 PDM decoder's occasional one-block peaks. Release is deliberately
-    // slower so gaps between syllables still count as one sound event.
+    // Fast enough to catch speech while the slower release bridges gaps
+    // between syllables into one sound event.
     const float envelopeAlpha = micRms > micEnvelope ? 0.15f : 0.02f;
     micEnvelope += (micRms - micEnvelope) * envelopeAlpha;
   }
@@ -538,22 +524,37 @@ bool enqueueTouchCorrection(TouchPresenceChoice choice, uint64_t now) {
   return true;
 }
 
-bool readTouch(uint64_t now) {
-  const auto touch = M5.Touch.getDetail();
-  if (!touch.wasClicked()) {
+bool readUserInput(uint64_t now) {
+  // M5GO has three active-low physical buttons. Use the debounced press edge
+  // instead of click/release so a long press can never disappear as a hold.
+  const bool chosePresent = M5.BtnA.wasPressed();
+  const bool choseWake = M5.BtnB.wasPressed();
+  const bool choseAbsent = M5.BtnC.wasPressed();
+
+  if (!chosePresent && !choseWake && !choseAbsent) {
     return false;
   }
 
-  // The evidence pair snapshots the state before any touch-induced mutation.
+  if (chosePresent) {
+    Serial.printf("EVENT,button,A,pressed,%" PRIu64 "\n", now);
+  }
+  if (choseWake) {
+    Serial.printf("EVENT,button,B,pressed,%" PRIu64 "\n", now);
+  }
+  if (choseAbsent) {
+    Serial.printf("EVENT,button,C,pressed,%" PRIu64 "\n", now);
+  }
+
+  // The evidence pair snapshots the state before any button-induced mutation.
   // A full/invalid feedback queue therefore cannot alter the state machine.
-  if (touch.y >= 207 && touch.x < 105) {
+  if (chosePresent) {
     if (!enqueueTouchCorrection(TouchPresenceChoice::kPersonWasPresent, now)) {
       return false;
     }
     lastPirMs = now;
     lastSoundMs = now;
     enterState(PresenceState::kPresent, TransitionReason::kTouchWake, now);
-  } else if (touch.y >= 207 && touch.x >= 215) {
+  } else if (choseAbsent) {
     if (!enqueueTouchCorrection(TouchPresenceChoice::kRoomWasAbsent, now)) {
       return false;
     }
@@ -561,34 +562,39 @@ bool readTouch(uint64_t now) {
     // fabricated state transition. Preserve the live state and merely skip
     // this iteration's automatic update so the evidence stays pre-touch.
   } else {
-    // The center (and the rest of the diagnostic surface) remains a generic
-    // wake gesture and intentionally does not create correction feedback.
+    // The center button remains a generic wake gesture and intentionally does
+    // not create correction feedback.
     lastPirMs = now;
     lastSoundMs = now;
     enterState(PresenceState::kPresent, TransitionReason::kTouchWake, now);
   }
 
   // Do not let the normal state update immediately overwrite an explicit
-  // touch result in this same loop iteration.
+  // button result in this same loop iteration.
   previousPirHigh = pirHigh;
   return true;
+}
+
+void logButtonPinChanges(uint64_t now) {
+  const uint8_t pressedMask =
+      (digitalRead(GPIO_NUM_39) == LOW ? 0x01 : 0x00) |
+      (digitalRead(GPIO_NUM_38) == LOW ? 0x02 : 0x00) |
+      (digitalRead(GPIO_NUM_37) == LOW ? 0x04 : 0x00);
+  static uint8_t previousMask = 0xFF;
+  if (pressedMask == previousMask) {
+    return;
+  }
+  previousMask = pressedMask;
+  Serial.printf("EVENT,button_gpio,%" PRIu64 ",A,%d,B,%d,C,%d\n", now,
+                (pressedMask & 0x01) != 0 ? 1 : 0,
+                (pressedMask & 0x02) != 0 ? 1 : 0,
+                (pressedMask & 0x04) != 0 ? 1 : 0);
 }
 
 void updatePresenceState(uint64_t now) {
   const bool pirRising = pirHigh && !previousPirHigh;
   if (pirHigh) {
     lastPirMs = now;
-  }
-
-  // Give the person installing the unit a visible five-minute window after
-  // every reboot. Sensor values remain live, but the backlight is held on so
-  // a stationary tester is not mistaken for an empty room mid-calibration.
-  if (now - bootMs >= kCalibrationMs && now - bootMs < kBenchTestMs) {
-    lastPirMs = now;
-    lastSoundMs = now;
-    enterState(PresenceState::kPresent, TransitionReason::kBenchOverride, now);
-    previousPirHigh = pirHigh;
-    return;
   }
 
   switch (state) {
@@ -652,18 +658,6 @@ void updatePresenceState(uint64_t now) {
   previousPirHigh = pirHigh;
 }
 
-void drawBar(M5Canvas& canvas, int x, int y, int width, int height,
-             float fraction, uint16_t color) {
-  fraction = fmaxf(0.0f, fminf(1.0f, fraction));
-  canvas.drawRect(x, y, width, height, TFT_DARKGREY);
-  canvas.fillRect(x + 2, y + 2,
-                  static_cast<int>((width - 4) * fraction), height - 4,
-                  color);
-  canvas.fillRect(x + 2 + static_cast<int>((width - 4) * fraction), y + 2,
-                  (width - 4) - static_cast<int>((width - 4) * fraction),
-                  height - 4, TFT_BLACK);
-}
-
 template <typename Canvas>
 void drawProvisioningOverlay(Canvas& canvas) {
   canvas.fillRoundRect(18, 54, 284, 132, 10, TFT_NAVY);
@@ -680,48 +674,204 @@ void drawProvisioningOverlay(Canvas& canvas) {
   canvas.setTextDatum(top_left);
 }
 
-void drawDisplayFallback(uint64_t now) {
-  if (!fallbackUiInitialized) {
-    forceCore2DisplayPower();
-    M5.Display.fillScreen(TFT_YELLOW);
-    M5.Display.setTextColor(TFT_BLACK, TFT_YELLOW);
-    M5.Display.setTextSize(2);
-    M5.Display.drawString("Core2 Presence Lab", 10, 10);
-    M5.Display.setTextSize(1);
-    M5.Display.drawString("Low-memory partial update mode", 10, 38);
-    M5.Display.drawRect(0, 207, 105, 33, TFT_DARKGREY);
-    M5.Display.drawRect(105, 207, 110, 33, TFT_DARKGREY);
-    M5.Display.drawRect(215, 207, 105, 33, TFT_DARKGREY);
-    M5.Display.setTextDatum(middle_center);
-    M5.Display.setTextColor(TFT_GREEN, TFT_YELLOW);
-    M5.Display.drawString("PRESENT", 52, 223);
-    M5.Display.setTextColor(TFT_BLACK, TFT_YELLOW);
-    M5.Display.drawString("WAKE", 160, 223);
-    M5.Display.setTextColor(TFT_RED, TFT_YELLOW);
-    M5.Display.drawString("ABSENT", 267, 223);
-    M5.Display.setTextDatum(top_left);
-    fallbackUiInitialized = true;
+const char* weatherCondition(uint8_t code) {
+  if (code == 0) {
+    return "Clear";
+  }
+  if (code == 1) {
+    return "Mostly clear";
+  }
+  if (code == 2) {
+    return "Partly cloudy";
+  }
+  if (code == 3) {
+    return "Overcast";
+  }
+  if (code == 45 || code == 48) {
+    return "Fog";
+  }
+  if (code >= 51 && code <= 57) {
+    return "Drizzle";
+  }
+  if (code >= 61 && code <= 67) {
+    return "Rain";
+  }
+  if (code >= 71 && code <= 77) {
+    return "Snow";
+  }
+  if (code >= 80 && code <= 82) {
+    return "Showers";
+  }
+  if (code >= 85 && code <= 86) {
+    return "Snow showers";
+  }
+  if (code >= 95 && code <= 99) {
+    return "Thunderstorm";
+  }
+  return "Weather";
+}
+
+float celsiusToFahrenheit(float celsius) {
+  return celsius * 1.8f + 32.0f;
+}
+
+void formatFeedAge(char* output, size_t capacity, uint64_t now,
+                   uint64_t fetchedAtUptimeMs) {
+  if (output == nullptr || capacity == 0) {
+    return;
+  }
+  if (fetchedAtUptimeMs == 0 || now < fetchedAtUptimeMs) {
+    std::snprintf(output, capacity, "--");
+    return;
+  }
+  const uint64_t seconds = (now - fetchedAtUptimeMs) / 1000;
+  if (seconds < 60) {
+    std::snprintf(output, capacity, "%" PRIu64 "s", seconds);
+  } else if (seconds < 60 * 60) {
+    std::snprintf(output, capacity, "%" PRIu64 "m", seconds / 60);
+  } else {
+    std::snprintf(output, capacity, "%" PRIu64 "h", seconds / (60 * 60));
+  }
+}
+
+template <typename Canvas>
+void drawDashboard(Canvas& canvas, uint64_t now) {
+  canvas.fillScreen(TFT_BLACK);
+  canvas.setTextDatum(top_left);
+
+  canvas.setTextSize(2);
+  canvas.setTextColor(TFT_CYAN, TFT_BLACK);
+  canvas.drawString("BLACKSBURG", 8, 7);
+  canvas.setTextDatum(top_right);
+  canvas.setTextColor(stateColor(state), TFT_BLACK);
+  canvas.drawString(stateName(state), 312, 7);
+  canvas.setTextDatum(top_left);
+  canvas.drawFastHLine(8, 29, 304, TFT_DARKGREY);
+
+  canvas.drawRoundRect(6, 36, 151, 134, 7, TFT_DARKGREY);
+  canvas.setTextSize(1);
+  const bool weatherCached =
+      dashboardSnapshot.weather.valid &&
+      dashboardSnapshot.weatherHealth.consecutiveFailures != 0;
+  canvas.setTextColor(weatherCached ? TFT_ORANGE : TFT_LIGHTGREY, TFT_BLACK);
+  canvas.drawString(weatherCached ? "OUTSIDE - CACHED" : "OUTSIDE", 14, 43);
+  if (dashboardSnapshot.weather.valid) {
+    const WeatherReading& weather = dashboardSnapshot.weather;
+    char value[40] = {};
+    canvas.setTextSize(4);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    std::snprintf(value, sizeof(value), "%.0fF", weather.currentTemperatureF);
+    canvas.drawString(value, 13, 57);
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_CYAN, TFT_BLACK);
+    canvas.drawString(weatherCondition(weather.currentWeatherCode), 13, 91);
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    std::snprintf(value, sizeof(value), "Feels %.0fF  RH %.0f%%",
+                  weather.apparentTemperatureF,
+                  weather.currentHumidityPct);
+    canvas.drawString(value, 13, 119);
+    std::snprintf(value, sizeof(value), "High %.0f  Low %.0f",
+                  weather.temperatureMaxF, weather.temperatureMinF);
+    canvas.drawString(value, 13, 136);
+    std::snprintf(value, sizeof(value), "Precip %.0f%%",
+                  weather.precipitationProbabilityMaxPct);
+    canvas.drawString(value, 13, 153);
+  } else {
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.drawString(
+        dashboardSnapshot.weatherHealth.consecutiveFailures == 0
+            ? "Loading..."
+            : "Unavailable",
+        13, 76);
+    canvas.setTextSize(1);
+    canvas.drawString("Waiting for Open-Meteo", 13, 110);
   }
 
-  // Only erase the small dynamic region, never the whole display.
-  M5.Display.fillRect(8, 58, 304, 126, TFT_YELLOW);
-  M5.Display.setTextColor(TFT_BLACK, TFT_YELLOW);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(10, 64);
-  M5.Display.printf("PIR: %s", pirHigh ? "MOTION" : "quiet ");
-  M5.Display.setCursor(10, 94);
-  M5.Display.printf("Mic: %.0f", micEnvelope);
-  M5.Display.setCursor(10, 124);
-  M5.Display.printf("Sound: %s", soundActive ? "YES" : "no ");
-  M5.Display.setCursor(10, 154);
-  const uint64_t elapsed = now - bootMs;
-  M5.Display.printf("Test: %" PRIu64 "s ",
-                    elapsed < kBenchTestMs
-                        ? (kBenchTestMs - elapsed) / 1000
-                        : 0);
-  if (provisioningChallengeActive) {
-    drawProvisioningOverlay(M5.Display);
+  canvas.drawRoundRect(163, 36, 151, 134, 7, TFT_DARKGREY);
+  canvas.setTextSize(1);
+  const bool environmentStale =
+      dashboardSnapshot.environment.valid &&
+      (dashboardSnapshot.environment.status == EnvironmentStatus::kOutDated ||
+       dashboardSnapshot.environmentHealth.consecutiveFailures != 0);
+  canvas.setTextColor(environmentStale ? TFT_ORANGE : TFT_LIGHTGREY,
+                      TFT_BLACK);
+  canvas.drawString(environmentStale ? "INDOOR - CACHED" : "INDOOR", 171, 43);
+  if (dashboardSnapshot.environment.valid) {
+    const EnvironmentReading& environment = dashboardSnapshot.environment;
+    char value[40] = {};
+    canvas.setTextSize(3);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    std::snprintf(value, sizeof(value), "%.1fF",
+                  celsiusToFahrenheit(environment.temperatureC));
+    canvas.drawString(value, 170, 62);
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_CYAN, TFT_BLACK);
+    std::snprintf(value, sizeof(value), "RH %.0f%%", environment.humidityPct);
+    canvas.drawString(value, 170, 98);
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    std::snprintf(value, sizeof(value), "Pressure %.0f hPa",
+                  environment.pressureHpa);
+    canvas.drawString(value, 170, 128);
+    std::snprintf(value, sizeof(value), "Sensor %.1fC",
+                  environment.qmpTemperatureC);
+    canvas.drawString(value, 170, 147);
+  } else {
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.drawString(
+        dashboardSnapshot.environmentHealth.consecutiveFailures == 0
+            ? "Loading..."
+            : "Unavailable",
+        170, 76);
+    canvas.setTextSize(1);
+    canvas.drawString("Waiting for devb", 170, 110);
   }
+
+  char weatherAge[16] = {};
+  char environmentAge[16] = {};
+  formatFeedAge(weatherAge, sizeof(weatherAge), now,
+                dashboardSnapshot.weatherHealth.fetchedAtUptimeMs);
+  formatFeedAge(environmentAge, sizeof(environmentAge), now,
+                dashboardSnapshot.environmentHealth.fetchedAtUptimeMs);
+  canvas.setTextSize(1);
+  canvas.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  char footer[64] = {};
+  if (dashboardSnapshot.weather.valid) {
+    std::snprintf(footer, sizeof(footer),
+                  "Rain %.2fin  Showers %.2fin  Snow %.2fin",
+                  dashboardSnapshot.weather.rainSumIn,
+                  dashboardSnapshot.weather.showersSumIn,
+                  dashboardSnapshot.weather.snowfallSumIn);
+    canvas.drawString(footer, 8, 176);
+  }
+  std::snprintf(footer, sizeof(footer), "Open-Meteo %s  |  room %s",
+                weatherAge, environmentAge);
+  canvas.drawString(footer, 8, 193);
+
+  canvas.drawRect(0, 207, 105, 33, TFT_DARKGREY);
+  canvas.drawRect(105, 207, 110, 33, TFT_DARKGREY);
+  canvas.drawRect(215, 207, 105, 33, TFT_DARKGREY);
+  canvas.setTextDatum(middle_center);
+  canvas.setTextColor(TFT_GREEN, TFT_BLACK);
+  canvas.drawString("A PRESENT", 52, 223);
+  canvas.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  canvas.drawString("B WAKE", 160, 223);
+  canvas.setTextColor(TFT_RED, TFT_BLACK);
+  canvas.drawString("C ABSENT", 267, 223);
+  canvas.setTextDatum(top_left);
+}
+
+void refreshDashboardSnapshot() {
+  DashboardSnapshot latest = {};
+  if (!dashboardMailbox.copySnapshot(&latest) ||
+      latest.version == dashboardSnapshot.version) {
+    return;
+  }
+  dashboardSnapshot = latest;
+  displayDirty = true;
 }
 
 void drawDisplay(uint64_t now) {
@@ -729,6 +879,7 @@ void drawDisplay(uint64_t now) {
       now >= provisioningChallengeExpiresMs) {
     provisioningChallengeActive = false;
     provisioningChallenge[0] = '\0';
+    displayDirty = true;
   }
   if (provisioningChallengeActive) {
     setBrightness(kOnBrightness);
@@ -736,81 +887,23 @@ void drawDisplay(uint64_t now) {
     provisioningBrightnessOverride = false;
     restoreStateBrightness();
   }
-  if (currentBrightness == 0 || now - lastDisplayMs < kDisplayIntervalMs) {
+  const bool heartbeatDue = now - lastDisplayMs >= kDisplayHeartbeatMs;
+  if (currentBrightness == 0 || (!displayDirty && !heartbeatDue) ||
+      now - lastDisplayMs < kDisplayMinimumIntervalMs) {
     return;
   }
   lastDisplayMs = now;
 
   if (!displayFrameReady) {
-    drawDisplayFallback(now);
+    drawDashboard(M5.Display, now);
+    if (provisioningChallengeActive) {
+      drawProvisioningOverlay(M5.Display);
+    }
+    displayDirty = false;
     return;
   }
 
-  const uint16_t background =
-      now - bootMs < kBenchTestMs ? TFT_YELLOW : TFT_BLACK;
-  displayFrame.fillScreen(background);
-  displayFrame.setTextDatum(top_left);
-
-  displayFrame.setTextSize(2);
-  displayFrame.setTextColor(TFT_CYAN, TFT_BLACK);
-  displayFrame.drawString("Core2 Presence Lab", 10, 8);
-
-  displayFrame.setTextColor(stateColor(state), TFT_BLACK);
-  if (now - bootMs < kBenchTestMs) {
-    const uint64_t secondsLeft = (kBenchTestMs - (now - bootMs)) / 1000;
-    char testLabel[32];
-    snprintf(testLabel, sizeof(testLabel), "TEST MODE  %" PRIu64 ":%02" PRIu64,
-             secondsLeft / 60, secondsLeft % 60);
-    displayFrame.drawString(testLabel, 10, 36);
-  } else {
-    displayFrame.drawString(stateName(state), 10, 36);
-  }
-
-  displayFrame.setTextSize(2);
-  displayFrame.setTextColor(TFT_WHITE, TFT_BLACK);
-  displayFrame.setCursor(10, 68);
-  displayFrame.printf("PIR G36: ");
-  displayFrame.setTextColor(pirHigh ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
-  displayFrame.printf("%s", pirHigh ? "MOTION" : "quiet");
-
-  displayFrame.setTextColor(TFT_WHITE, TFT_BLACK);
-  displayFrame.setCursor(10, 96);
-  displayFrame.printf("Mic level: %.0f", micEnvelope);
-  drawBar(displayFrame, 10, 120, 300, 16,
-          soundThreshold > 0.0f ? micEnvelope / (soundThreshold * 1.25f)
-                                : 0.0f,
-          soundActive ? TFT_MAGENTA : TFT_BLUE);
-
-  displayFrame.setTextSize(1);
-  displayFrame.setCursor(10, 142);
-  displayFrame.setTextColor(soundActive ? TFT_MAGENTA : TFT_LIGHTGREY,
-                            TFT_BLACK);
-  displayFrame.printf("raw %.0f noise %.0f trigger %.0f", micRms, noiseFloor,
-                      soundThreshold);
-
-  displayFrame.setCursor(10, 164);
-  displayFrame.setTextColor(tmosDetected ? TFT_ORANGE : TFT_DARKGREY,
-                            TFT_BLACK);
-  displayFrame.printf("TMOS:%s  base IMU:%s",
-                      tmosDetected ? "FOUND" : "none",
-                      baseImuDetected ? "FOUND" : "none");
-
-  displayFrame.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  displayFrame.setCursor(10, 184);
-  displayFrame.printf("Config r%" PRIu64 "  mic %.2fx", activeConfig.revision,
-                      activeConfig.soundFactor);
-
-  displayFrame.drawRect(0, 207, 105, 33, TFT_DARKGREY);
-  displayFrame.drawRect(105, 207, 110, 33, TFT_DARKGREY);
-  displayFrame.drawRect(215, 207, 105, 33, TFT_DARKGREY);
-  displayFrame.setTextDatum(middle_center);
-  displayFrame.setTextColor(TFT_GREEN, TFT_BLACK);
-  displayFrame.drawString("PRESENT", 52, 223);
-  displayFrame.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  displayFrame.drawString("WAKE", 160, 223);
-  displayFrame.setTextColor(TFT_RED, TFT_BLACK);
-  displayFrame.drawString("ABSENT", 267, 223);
-  displayFrame.setTextDatum(top_left);
+  drawDashboard(displayFrame, now);
 
   if (provisioningChallengeActive) {
     drawProvisioningOverlay(displayFrame);
@@ -819,6 +912,7 @@ void drawDisplay(uint64_t now) {
   M5.Display.startWrite();
   displayFrame.pushSprite(0, 0);
   M5.Display.endWrite();
+  displayDirty = false;
 }
 
 void printSerial(uint64_t now) {
@@ -839,8 +933,9 @@ void setup() {
   config.serial_baudrate = 115200;
   config.clear_display = true;
   config.output_power = true;
+  config.fallback_board = m5::board_t::board_M5Stack;
   config.internal_mic = false;
-  config.internal_spk = true;
+  config.internal_spk = false;
   M5.begin(config);
   baseImuDetected = M5.Imu.isEnabled();
 
@@ -849,36 +944,40 @@ void setup() {
 
   M5.Display.setRotation(1);
   M5.Display.setTextWrap(false);
-  forceCore2DisplayPower();
-  displayFrame.setPsram(true);
+  ensureDisplayAwake();
+  displayFrame.setPsram(false);
   displayFrame.setColorDepth(8);
   displayFrameReady =
       displayFrame.createSprite(M5.Display.width(), M5.Display.height());
 
-  // Unmissable display/PMIC check before sensor initialization. The normal
-  // diagnostics UI replaces this after three seconds.
-  M5.Display.fillScreen(TFT_WHITE);
+  // Brief boot card; the production dashboard replaces it as soon as setup
+  // completes. Keep this short so restart does not feel like a display test.
+  M5.Display.fillScreen(TFT_BLACK);
   M5.Display.setTextDatum(middle_center);
-  M5.Display.setTextColor(TFT_RED, TFT_WHITE);
+  M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
   M5.Display.setTextSize(3);
-  M5.Display.drawString("DISPLAY POWER OK", M5.Display.width() / 2,
-                        M5.Display.height() / 2);
-  delay(3000);
+  M5.Display.drawString("M5GO DESK", M5.Display.width() / 2,
+                        M5.Display.height() / 2 - 12);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  M5.Display.drawString("Starting sensors...", M5.Display.width() / 2,
+                        M5.Display.height() / 2 + 24);
+  delay(600);
   M5.Display.setTextDatum(top_left);
 
   pinMode(kPirPin, INPUT);
-  // Do not create another TwoWire instance on I2C controller 1 here. Core2's
-  // internal AXP2101 PMIC uses that controller on GPIO21/22; remapping it to
-  // external Port A GPIO32/33 makes the LCD backlight control disappear.
-  // The attached sensor is already verified as the digital GPIO36 PIR path.
+  // The attached motion sensor is the digital GPIO36 input on M5GO PORT.B.
+  // GPIO36 is input-only and has no internal pull resistor, so preserve the
+  // sensor module's own output conditioning and use plain INPUT mode.
   tmosDetected = false;
 
-  // Core2 shares I2S0 between speaker and microphone. Stop the speaker before
-  // installing the raw PDM receive driver.
-  M5.Speaker.end();
-  delay(50);
-  forceCore2DisplayPower();
-  micBeginOk = beginRawMicrophone();
+  // Keep the unused M5GO base speaker at a defined low level, then sample its
+  // analog microphone directly from ADC1 GPIO34. ADC1 remains available while
+  // Wi-Fi is active (unlike ADC2).
+  pinMode(GPIO_NUM_25, OUTPUT);
+  digitalWrite(GPIO_NUM_25, LOW);
+  ensureDisplayAwake();
+  micBeginOk = beginAnalogMicrophone();
 
   runtimeIdentity = createRuntimeIdentity();
 
@@ -906,7 +1005,7 @@ void setup() {
                     PresenceState::kCalibrating, TransitionReason::kBoot,
                     bootMs);
 
-  Serial.println("Core2 Presence Lab v0.4");
+  Serial.println("M5GO Presence Lab v0.6.0");
   Serial.printf("IDENTITY,device_id,%s,boot_id,%s,valid,%d\n",
                 runtimeIdentity.deviceId, runtimeIdentity.bootId,
                 runtimeIdentity.deviceIdValid ? 1 : 0);
@@ -914,15 +1013,17 @@ void setup() {
                 activeConfig.revision,
                 static_cast<unsigned>(configStorageResult));
   Serial.printf(
-      "DEVICE,pir_gpio,%d,tmos_0x5a,%d,mic_started,%d,mic_data,34,"
-      "mic_clock,0,driver,raw_i2s_pdm,base_imu,%d,board,%d,pmic,%d,"
-      "display,%dx%d,frame_buffer,%d,psram,%u\n",
+      "DEVICE,pir_gpio,%d,tmos_0x5a,%d,mic_started,%d,mic_gpio,34,"
+      "mic_probe,%u,driver,adc1_poll,base_imu,%d,board,%d,pmic,%d,"
+      "input_mode,buttons,button_gpio,A39_B38_C37,display,%dx%d,"
+      "frame_buffer,%d,psram,%u\n",
                 static_cast<int>(kPirPin), tmosDetected ? 1 : 0,
-                micBeginOk ? 1 : 0, baseImuDetected ? 1 : 0,
+                micBeginOk ? 1 : 0, static_cast<unsigned>(micProbeRaw),
+                baseImuDetected ? 1 : 0,
                 static_cast<int>(M5.getBoard()),
-                static_cast<int>(M5.Power.getType()), M5.Display.width(),
-                M5.Display.height(), displayFrameReady ? 1 : 0,
-                ESP.getPsramSize());
+                static_cast<int>(M5.Power.getType()),
+                M5.Display.width(), M5.Display.height(),
+                displayFrameReady ? 1 : 0, ESP.getPsramSize());
   Serial.println(
       "CSV,type,ms,pir,mic_rms,mic_envelope,mic_min,mic_max,noise,"
       "threshold,sound,state,brightness");
@@ -935,6 +1036,24 @@ void setup() {
   uploaderSettings.configured = deviceSettingsConfigured;
   uploaderSettings.initialConfig = activeConfig;
   uploaderSettings.startAfterUptimeMs = bootMs + kCalibrationMs + 1000;
+  uploaderSettings.environmentPollIntervalMs = kEnvironmentPollIntervalMs;
+  const int environmentUrlLength =
+      std::snprintf(uploaderSettings.environmentUrl,
+                    sizeof(uploaderSettings.environmentUrl), "%s",
+                    kEnvironmentMetricsUrl);
+  uploaderSettings.environmentEnabled =
+      deviceSettingsConfigured && environmentUrlLength > 0 &&
+      static_cast<size_t>(environmentUrlLength) <
+          sizeof(uploaderSettings.environmentUrl);
+  uploaderSettings.weatherPollIntervalMs = kWeatherPollIntervalMs;
+  const int weatherUrlLength =
+      std::snprintf(uploaderSettings.weatherUrl,
+                    sizeof(uploaderSettings.weatherUrl), "%s",
+                    kWeatherForecastUrl);
+  uploaderSettings.weatherEnabled =
+      deviceSettingsConfigured && weatherUrlLength > 0 &&
+      static_cast<size_t>(weatherUrlLength) <
+          sizeof(uploaderSettings.weatherUrl);
   if (deviceSettingsConfigured) {
     std::memcpy(uploaderSettings.wifiSsid, loadedSettings.ssid,
                 sizeof(loadedSettings.ssid));
@@ -947,7 +1066,8 @@ void setup() {
   }
   const bool uploaderStarted =
       startTelemetryUploader(runtimeIdentity, uploaderSettings, telemetryQueue,
-                             configMailbox, touchFeedbackQueue);
+                             configMailbox, touchFeedbackQueue,
+                             dashboardMailbox);
   securelyClear(&loadedSettings, sizeof(loadedSettings));
   securelyClear(&uploaderSettings, sizeof(uploaderSettings));
   Serial.printf("NETWORK,configured,%d,uploader_started,%d,settings_status,%u\n",
@@ -958,12 +1078,14 @@ void setup() {
 void loop() {
   const uint64_t now = monotonicMillis();
   applyPendingConfig(now);
+  refreshDashboardSnapshot();
   M5.update();
+  logButtonPinChanges(now);
 
   pirHigh = digitalRead(kPirPin) == HIGH;
   sampleMicrophone(now);
-  const bool touchChangedState = readTouch(now);
-  if (!touchChangedState) {
+  const bool userInputChangedState = readUserInput(now);
+  if (!userInputChangedState) {
     updatePresenceState(now);
   }
   drawDisplay(now);

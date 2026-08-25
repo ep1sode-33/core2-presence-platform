@@ -20,7 +20,7 @@ systemctl enable --now m5-presence-api.service
 ```
 
 Do not regenerate `/etc/m5-presence.token` during an ordinary code update; it
-must remain synchronized with the Core2 credential. Rotation is a deliberate
+must remain synchronized with the M5GO credential. Rotation is a deliberate
 separate operation. The service fails closed if the credential is absent or
 empty.
 

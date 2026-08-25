@@ -1,6 +1,6 @@
 # Presence API
 
-FastAPI + SQLite service for Core2 presence telemetry, state transitions,
+FastAPI + SQLite service for M5GO presence telemetry, state transitions,
 human feedback, and versioned device configuration.
 
 ## Local development

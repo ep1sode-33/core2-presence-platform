@@ -4,10 +4,10 @@
 
 The project is one Git repository with three separately deployed parts:
 
-1. The Core2 firmware owns sensor sampling, presence decisions, display power,
+1. The M5GO firmware owns sensor sampling, presence decisions, display power,
    rendering, a bounded telemetry queue, and eventual offline spooling.
-2. The presence API on `devb` owns durable telemetry, feedback, configuration,
-   and later the display-data aggregation endpoint.
+2. The presence API on `devb` owns durable telemetry, feedback, and
+   configuration.
 3. The existing environmental sensor API remains a separate service on `devb`
    while the presence API is introduced.
 
@@ -18,8 +18,14 @@ Initial ports on `devb`:
 - Presence API: reserve `192.168.0.46:8081` and
   `100.117.242.46:8081`.
 
-The Core2 uses the LAN address. Tailnet clients use the Tailscale address. Both
+The M5GO uses the LAN address. Tailnet clients use the Tailscale address. Both
 services bind only those two explicit addresses, not every interface.
+
+The display reads the environmental API directly over the LAN and reads the
+public Open-Meteo forecast directly. Both requests run serially in the same
+Core 0 worker that owns Wi-Fi. A POD mailbox publishes complete display-data
+snapshots to the hardware loop; HTTP, JSON parsing, and retry logic never run in
+the sampling/rendering loop.
 
 ## Telemetry flow
 
@@ -52,7 +58,7 @@ existing record identity is an HTTP 409 rather than a silent overwrite.
   leaves the exact envelope in the retry spool; USB reprovisioning plus restart
   retries it with corrected connection settings. Payload-specific HTTP 409 and
   422 responses move only that envelope to the diagnostic dead-letter queue.
-- Device-originated touch feedback is uploaded only after the telemetry record
+- Device-originated button feedback is uploaded only after the telemetry record
   it references has been acknowledged. This preserves its original uptime and
   reconstructed event time without accepting dangling calibration labels.
 - A feedback envelope has one durable, immutable `feedback_id` and payload.
@@ -71,9 +77,9 @@ existing record identity is an HTTP 409 rather than a silent overwrite.
 - ACK cleanup removes only the exact immutable envelope whose `batch_id` was
   acknowledged. `max_seq` is a response cross-check, never a cumulative delete
   watermark, because envelopes may be retried out of order.
-- A touch correction first snapshots the pre-touch state into a priority
+- A button correction first snapshots the pre-button state into a priority
   telemetry record and atomically queues feedback referencing that record.
-  Touch-wake evidence may then update the live UI immediately, but the network
+  Button-wake evidence may then update the live UI immediately, but the network
   worker waits for the referenced record's ACK before posting the feedback.
   Thus the gesture cannot contaminate its own human label or produce a 404.
 - Applying a new configuration closes the current batch. One envelope never
@@ -140,6 +146,10 @@ Wi-Fi credentials, IP address, USB serial enumeration, firmware version, and
 display settings. Firmware updates and factory Wi-Fi reprovisioning must not
 change it, because it is part of every idempotency and history key.
 
+The `core2-` prefix is a legacy v1 wire identifier assigned before the physical
+unit was correctly identified as an M5GO. It is intentionally preserved; a
+cosmetic rename would create a different logical device and split history.
+
 ## Data ownership
 
 - Raw microphone audio never leaves the device and is never stored.
@@ -149,7 +159,7 @@ change it, because it is part of every idempotency and history key.
   marker, preserving the previous valid configuration across interrupted
   updates.
 - SQLite on `devb` is the authoritative history.
-- The Core2's internal flash is only an outage spool; it is not the primary
+- The M5GO's internal flash is only an outage spool; it is not the primary
   database.
 - Sensor samples and transitions are append-only. Configuration and human
   feedback are the only user-editable domains.
@@ -158,12 +168,13 @@ change it, because it is part of every idempotency and history key.
 
 The following validated behavior must survive every firmware refactor:
 
-- Explicit AXP2101 display rail enablement (`ALDO4`, `ALDO2`, `BLDO1`).
-- No remapping of I2C controller 1 away from internal GPIO21/22.
-- Raw I2S0 PDM microphone on clock GPIO0 and data GPIO34 at 44.1 kHz.
-- Stop the shared I2S speaker before starting the microphone.
-- PSRAM-backed 8-bit display canvas with the partial-update fallback.
-- Digital PIR on GPIO36.
+- Classic M5Stack/M5GO board target with 16 MB flash and no PSRAM.
+- Digital PIR on input-only GPIO36 at PORT.B.
+- Analog microphone on ADC1 GPIO34, sampled directly at 8 kHz in 128-sample
+  windows so it remains compatible with Wi-Fi.
+- Unused speaker/DAC output GPIO25 held low while sampling the microphone.
+- Physical buttons A/B/C on GPIO39/38/37.
+- Internal-RAM 8-bit display canvas with the partial-update fallback.
 
 ## Transport security boundary
 
@@ -174,8 +185,14 @@ service must not be exposed to an untrusted LAN or public interface. HTTPS is
 not accepted by provisioning until the firmware has a real certificate trust
 configuration; it never falls back to an insecure TLS client.
 
+The two display feeds are credential-free GETs and never receive the presence
+Bearer token. The LAN environment feed and first Open-Meteo integration also
+use plain HTTP, so their values have no transport-integrity guarantee; a later
+TLS trust-store change can harden weather transport without changing telemetry
+or provisioning semantics.
+
 USB provisioning also treats the attached host and serial endpoint as trusted.
 Its short-lived challenge supplies freshness and transaction correlation, not
 proof of physical presence. A future hardened flow must gate configured-device
-replacement on a Core2 touch/long-press and confirm the displayed identity
+replacement on an M5GO physical-button hold and confirm the displayed identity
 before the host sends credentials.

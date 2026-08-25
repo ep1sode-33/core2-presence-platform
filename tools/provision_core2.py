@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision a Core2 over the USB serial line protocol.
+"""Provision the M5GO over the USB serial line protocol.
 
 The protocol helpers in this module intentionally have no pyserial dependency so
 they can be unit tested on a development machine without attached hardware.
@@ -180,7 +180,7 @@ def parse_result_line(line: str) -> ProvisionResult:
 def discover_port(
     ports: Iterable[object], fragment: str = DEFAULT_PORT_FRAGMENT
 ) -> str:
-    """Select exactly one pyserial ListPortInfo matching the Core2 port name."""
+    """Select exactly one pyserial ListPortInfo matching the M5GO port name."""
 
     matches: set[str] = set()
     for port in ports:
@@ -192,7 +192,7 @@ def discover_port(
     matches.discard("")
     if not matches:
         raise PortDiscoveryError(
-            f"no USB serial port matching {fragment!r}; reconnect the Core2 or use --port"
+            f"no USB serial port matching {fragment!r}; reconnect the M5GO or use --port"
         )
     if len(matches) > 1:
         raise PortDiscoveryError(
@@ -250,7 +250,7 @@ def read_secrets_from_stdin(stream: TextIO) -> tuple[str, str]:
 
 def create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Provision Core2 Wi-Fi and API credentials over USB serial."
+        description="Provision M5GO Wi-Fi and API credentials over USB serial."
     )
     parser.add_argument(
         "--port",
@@ -395,7 +395,7 @@ def provision(
             # Do not include the exception text: a transport implementation could
             # include the just-written buffer, which contains encoded secrets.
             raise ProvisioningError(
-                "serial connection failed; check the port and reconnect the Core2"
+                "serial connection failed; check the port and reconnect the M5GO"
             ) from None
         raise
 
