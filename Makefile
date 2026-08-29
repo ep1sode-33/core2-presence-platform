@@ -1,4 +1,4 @@
-.PHONY: firmware-build firmware-unit firmware-upload firmware-monitor tools-test backend-install backend-venv backend-test backend-lint backend-run contract-generate contract-check
+.PHONY: firmware-build firmware-unit firmware-upload firmware-monitor tools-test backend-install backend-venv backend-test backend-lint backend-run deploy-test contract-generate contract-check
 
 PYTHON ?= python3
 PIO := PLATFORMIO_CORE_DIR=$(CURDIR)/.platformio $(CURDIR)/.venv/bin/pio
@@ -96,8 +96,11 @@ backend-install:
 	$(PYTHON) -m venv backend/.venv
 	$(BACKEND_PYTHON) -m pip install -e ./backend
 
-backend-test: contract-check
+backend-test: contract-check deploy-test
 	$(BACKEND_PYTEST) backend/tests
+
+deploy-test:
+	$(PYTHON) -m unittest discover -s deploy/devb/tests -v
 
 backend-lint:
 	$(BACKEND_RUFF) check backend

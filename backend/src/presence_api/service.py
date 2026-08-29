@@ -327,6 +327,16 @@ class PresenceService:
                                 "different payload: "
                                 f"{device_id}/{batch.boot_id}/{item.seq}"
                             )
+                        if (
+                            existing_record.applied_config_revision is not None
+                            and existing_record.applied_config_revision
+                            != batch.applied_config_revision
+                        ):
+                            raise ConflictError(
+                                "record identity already exists with a "
+                                "different applied_config_revision: "
+                                f"{device_id}/{batch.boot_id}/{item.seq}"
+                            )
                         duplicates += 1
                         continue
 
@@ -342,6 +352,7 @@ class PresenceService:
                         observed_at_ms=observed_at_ms,
                         received_at_ms=received_at_ms,
                         time_quality=time_quality,
+                        applied_config_revision=batch.applied_config_revision,
                         payload_hash=record_hash,
                     )
                     session.add(telemetry_record)
@@ -418,6 +429,7 @@ class PresenceService:
             observed_at_ms=record.observed_at_ms,
             received_at_ms=record.received_at_ms,
             time_quality=record.time_quality,
+            applied_config_revision=record.applied_config_revision,
             pir=sample.pir,
             mic_rms=sample.mic_rms,
             mic_envelope=sample.mic_envelope,
@@ -442,6 +454,7 @@ class PresenceService:
             observed_at_ms=record.observed_at_ms,
             received_at_ms=record.received_at_ms,
             time_quality=record.time_quality,
+            applied_config_revision=record.applied_config_revision,
             from_state=transition.from_state,
             to_state=transition.to_state,
             reason=transition.reason,

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1118">
+  <title>M5GO Presence Console</title>
+  <link rel="stylesheet" href="/console/assets/console.css">
+  <script src="/console/assets/console.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">M5GO · BLACKSBURG</p>
+      <h1>Presence Console</h1>
+    </div>
+    <div class="connection-state" id="connectionState" data-tone="neutral">
+      Not connected
+    </div>
+  </header>
+
+  <main>
+    <section class="panel access-panel" aria-labelledby="accessTitle">
+      <div>
+        <h2 id="accessTitle">Connect</h2>
+        <p class="muted">
+          The bearer token stays in this browser tab's session storage and is
+          sent only in the Authorization header.
+        </p>
+      </div>
+      <div class="access-controls">
+        <label>
+          Bearer token
+          <input id="tokenInput" type="password" autocomplete="off"
+                 spellcheck="false" placeholder="Paste token">
+        </label>
+        <button id="connectButton" type="button">Connect</button>
+        <button id="forgetButton" class="secondary" type="button">
+          Forget token
+        </button>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="Dashboard controls">
+      <label>
+        Device
+        <select id="deviceSelect" disabled>
+          <option value="">Connect to load devices</option>
+        </select>
+      </label>
+      <label>
+        Window
+        <select id="hoursSelect">
+          <option value="1">Last hour</option>
+          <option value="6" selected>Last 6 hours</option>
+          <option value="24">Last 24 hours</option>
+        </select>
+      </label>
+      <button id="refreshButton" class="secondary" type="button" disabled>
+        Refresh
+      </button>
+      <p id="message" class="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="metric-grid" aria-label="Device health">
+      <article class="metric-card status-card">
+        <p class="metric-label">Presence</p>
+        <p class="metric-value" id="presenceValue">—</p>
+        <p class="metric-detail" id="latestDetail">No sample</p>
+      </article>
+      <article class="metric-card">
+        <p class="metric-label">Last seen</p>
+        <p class="metric-value" id="lastSeenValue">—</p>
+        <p class="metric-detail" id="lastSeenDetail">Waiting for device</p>
+      </article>
+      <article class="metric-card">
+        <p class="metric-label">Firmware</p>
+        <p class="metric-value" id="firmwareValue">—</p>
+        <p class="metric-detail" id="deviceIdValue">No device selected</p>
+      </article>
+      <article class="metric-card">
+        <p class="metric-label">Config revision</p>
+        <p class="metric-value" id="revisionValue">—</p>
+        <p class="metric-detail" id="revisionDetail">desired / latest reported</p>
+      </article>
+    </section>
+
+    <section class="panel chart-panel" aria-labelledby="timelineTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">SENSOR EVIDENCE</p>
+          <h2 id="timelineTitle">Presence timeline</h2>
+        </div>
+        <div class="legend" aria-label="Chart legend">
+          <span><i data-legend="present"></i>Present</span>
+          <span><i data-legend="mic"></i>Mic envelope</span>
+          <span><i data-legend="threshold"></i>Threshold</span>
+          <span><i data-legend="pir"></i>PIR</span>
+          <span><i data-legend="feedback"></i>Feedback</span>
+        </div>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="timelineCanvas" role="img"
+                aria-label="Presence, PIR, microphone and threshold timeline">
+        </canvas>
+      </div>
+      <p class="muted chart-caption" id="chartCaption">
+        Connect to load telemetry.
+      </p>
+    </section>
+
+    <section class="two-column">
+      <article class="panel" aria-labelledby="calibrationTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">WINDOW SUMMARY</p>
+            <h2 id="calibrationTitle">Calibration</h2>
+          </div>
+        </div>
+        <dl class="stat-list">
+          <div><dt>Samples</dt><dd id="sampleCount">—</dd></div>
+          <div><dt>Present</dt><dd id="presentFraction">—</dd></div>
+          <div><dt>PIR active</dt><dd id="pirFraction">—</dd></div>
+          <div><dt>Sound active</dt><dd id="soundFraction">—</dd></div>
+          <div><dt>Mean mic envelope</dt><dd id="micMean">—</dd></div>
+          <div><dt>Mean noise floor</dt><dd id="noiseMean">—</dd></div>
+          <div><dt>Mean threshold</dt><dd id="thresholdMean">—</dd></div>
+          <div><dt>Threshold / noise</dt><dd id="thresholdRatio">—</dd></div>
+          <div><dt>Feedback mismatch</dt><dd id="mismatchCount">—</dd></div>
+        </dl>
+      </article>
+
+      <article class="panel" aria-labelledby="feedbackTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">HUMAN LABELS</p>
+            <h2 id="feedbackTitle">Feedback markers</h2>
+          </div>
+          <p class="count-pill" id="feedbackCount">0</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Time</th><th>Actual</th><th>Observed</th><th>Source</th><th>Note</th></tr>
+            </thead>
+            <tbody id="feedbackBody">
+              <tr><td colspan="5" class="empty-cell">No feedback in window</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel" aria-labelledby="configTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">VERSIONED SETTINGS</p>
+          <h2 id="configTitle">Presence configuration</h2>
+        </div>
+        <p class="count-pill" id="configRevision">Revision —</p>
+      </div>
+      <form id="configForm" class="config-form">
+        <label>Minimum on (ms)<input name="minimum_on_ms" type="number" min="0" max="600000" step="1" required></label>
+        <label>PIR hold (ms)<input name="pir_hold_ms" type="number" min="1000" max="3600000" step="1" required></label>
+        <label>Sound hold (ms)<input name="sound_hold_ms" type="number" min="0" max="600000" step="1" required></label>
+        <label>Max sound bridge (ms)<input name="max_sound_bridge_ms" type="number" min="0" max="3600000" step="1" required></label>
+        <label>Cooldown (ms)<input name="cooldown_ms" type="number" min="0" max="600000" step="1" required></label>
+        <label>Sound factor<input name="sound_factor" type="number" min="1" max="4" step="0.01" required></label>
+        <label>Telemetry interval (ms)<input name="telemetry_interval_ms" type="number" min="250" max="60000" step="1" required></label>
+        <label>Upload batch size<input name="upload_batch_size" type="number" min="1" max="30" step="1" required></label>
+        <div class="form-actions">
+          <button id="reviewButton" type="submit" disabled>Review changes</button>
+          <p class="muted">A new revision is issued only after explicit confirmation.</p>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="confirmDialog" aria-labelledby="confirmTitle">
+    <form method="dialog" class="dialog-card">
+      <p class="eyebrow">CONFIGURATION WRITE</p>
+      <h2 id="confirmTitle">Confirm new revision</h2>
+      <p>This will ask the device to apply the following changes:</p>
+      <ul id="changeList" class="change-list"></ul>
+      <label class="confirm-check">
+        <input id="confirmCheckbox" type="checkbox">
+        I reviewed these values and want to issue a new revision.
+      </label>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary">Cancel</button>
+        <button id="applyButton" value="default" type="button" disabled>
+          Apply configuration
+        </button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

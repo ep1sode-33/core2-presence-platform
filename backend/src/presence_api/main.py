@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 
 from .config import Settings
+from .console import create_console_router
 from .database import Database
 from .schemas import (
     DEVICE_ID_PATTERN,
@@ -228,6 +229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.put_config(device_id, update)
 
     app.include_router(router)
+    app.include_router(create_console_router(database, service, require_api_token))
     return app
 
 

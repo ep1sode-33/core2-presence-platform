@@ -639,6 +639,109 @@
           }
         }
       }
+    },
+    "/v1/console/devices": {
+      "get": {
+        "summary": "List Console Devices",
+        "operationId": "list_console_devices_v1_console_devices_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleDeviceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          }
+        },
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/devices/{device_id}/console": {
+      "get": {
+        "summary": "Console Snapshot",
+        "operationId": "console_snapshot_v1_devices__device_id__console_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 24.0,
+              "minimum": 0.25,
+              "default": 6.0,
+              "title": "Hours"
+            }
+          },
+          {
+            "name": "max_points",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "minimum": 60,
+              "default": 480,
+              "title": "Max Points"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "description": "Device does not exist"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -759,6 +862,609 @@
           "config"
         ],
         "title": "ConfigResponse"
+      },
+      "ConsoleCalibration": {
+        "properties": {
+          "pir_active_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir Active Fraction"
+          },
+          "sound_active_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Active Fraction"
+          },
+          "present_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Present Fraction"
+          },
+          "mic_envelope_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mic Envelope Mean"
+          },
+          "mic_envelope_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mic Envelope Max"
+          },
+          "noise_floor_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor Mean"
+          },
+          "sound_threshold_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Threshold Mean"
+          },
+          "threshold_to_noise_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold To Noise Ratio"
+          },
+          "transition_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Transition Reasons"
+          },
+          "feedback": {
+            "$ref": "#/components/schemas/ConsoleFeedbackCounts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pir_active_fraction",
+          "sound_active_fraction",
+          "present_fraction",
+          "mic_envelope_mean",
+          "mic_envelope_max",
+          "noise_floor_mean",
+          "sound_threshold_mean",
+          "threshold_to_noise_ratio",
+          "transition_reasons",
+          "feedback"
+        ],
+        "title": "ConsoleCalibration"
+      },
+      "ConsoleDeviceList": {
+        "properties": {
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConsoleDeviceSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "server_utc_ms",
+          "items"
+        ],
+        "title": "ConsoleDeviceList"
+      },
+      "ConsoleDeviceSummary": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "online_threshold_ms": {
+            "type": "integer",
+            "title": "Online Threshold Ms"
+          },
+          "last_seen_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At Ms"
+          },
+          "last_seen_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen Age Ms"
+          },
+          "firmware_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Version"
+          },
+          "desired_config_revision": {
+            "type": "integer",
+            "title": "Desired Config Revision"
+          },
+          "latest_reported_config_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Reported Config Revision"
+          },
+          "highest_applied_config_revision": {
+            "type": "integer",
+            "title": "Highest Applied Config Revision"
+          },
+          "config_sync": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "in_sync",
+              "pending",
+              "regressed",
+              "divergent"
+            ],
+            "title": "Config Sync"
+          },
+          "latest_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_id",
+          "name",
+          "online",
+          "online_threshold_ms",
+          "last_seen_at_ms",
+          "last_seen_age_ms",
+          "firmware_version",
+          "desired_config_revision",
+          "latest_reported_config_revision",
+          "highest_applied_config_revision",
+          "config_sync",
+          "latest_state"
+        ],
+        "title": "ConsoleDeviceSummary"
+      },
+      "ConsoleFeedback": {
+        "properties": {
+          "marker_ms": {
+            "type": "integer",
+            "title": "Marker Ms"
+          },
+          "feedback_id": {
+            "type": "string",
+            "title": "Feedback Id"
+          },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
+          },
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seq"
+          },
+          "actual_presence": {
+            "type": "string",
+            "enum": [
+              "present",
+              "absent"
+            ],
+            "title": "Actual Presence"
+          },
+          "observed_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "marker_ms",
+          "feedback_id",
+          "boot_id",
+          "seq",
+          "actual_presence",
+          "observed_state",
+          "source",
+          "note"
+        ],
+        "title": "ConsoleFeedback"
+      },
+      "ConsoleFeedbackCounts": {
+        "properties": {
+          "present": {
+            "type": "integer",
+            "title": "Present"
+          },
+          "absent": {
+            "type": "integer",
+            "title": "Absent"
+          },
+          "mismatch": {
+            "type": "integer",
+            "title": "Mismatch"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "present",
+          "absent",
+          "mismatch"
+        ],
+        "title": "ConsoleFeedbackCounts"
+      },
+      "ConsoleSeriesPoint": {
+        "properties": {
+          "start_ms": {
+            "type": "integer",
+            "title": "Start Ms"
+          },
+          "end_ms": {
+            "type": "integer",
+            "title": "End Ms"
+          },
+          "sample_count": {
+            "type": "integer",
+            "title": "Sample Count"
+          },
+          "pir_active_fraction": {
+            "type": "number",
+            "title": "Pir Active Fraction"
+          },
+          "sound_active_fraction": {
+            "type": "number",
+            "title": "Sound Active Fraction"
+          },
+          "present_fraction": {
+            "type": "number",
+            "title": "Present Fraction"
+          },
+          "mic_envelope_mean": {
+            "type": "number",
+            "title": "Mic Envelope Mean"
+          },
+          "mic_envelope_max": {
+            "type": "number",
+            "title": "Mic Envelope Max"
+          },
+          "noise_floor_mean": {
+            "type": "number",
+            "title": "Noise Floor Mean"
+          },
+          "sound_threshold_mean": {
+            "type": "number",
+            "title": "Sound Threshold Mean"
+          },
+          "brightness_mean": {
+            "type": "number",
+            "title": "Brightness Mean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start_ms",
+          "end_ms",
+          "sample_count",
+          "pir_active_fraction",
+          "sound_active_fraction",
+          "present_fraction",
+          "mic_envelope_mean",
+          "mic_envelope_max",
+          "noise_floor_mean",
+          "sound_threshold_mean",
+          "brightness_mean"
+        ],
+        "title": "ConsoleSeriesPoint"
+      },
+      "ConsoleSnapshot": {
+        "properties": {
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "device": {
+            "$ref": "#/components/schemas/ConsoleDeviceSummary"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ConsoleWindow"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SampleOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calibration": {
+            "$ref": "#/components/schemas/ConsoleCalibration"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/ConsoleSeriesPoint"
+            },
+            "type": "array",
+            "title": "Series"
+          },
+          "transitions": {
+            "items": {
+              "$ref": "#/components/schemas/ConsoleTransition"
+            },
+            "type": "array",
+            "title": "Transitions"
+          },
+          "feedback": {
+            "items": {
+              "$ref": "#/components/schemas/ConsoleFeedback"
+            },
+            "type": "array",
+            "title": "Feedback"
+          },
+          "config": {
+            "$ref": "#/components/schemas/ConfigResponse"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "server_utc_ms",
+          "device",
+          "window",
+          "latest",
+          "calibration",
+          "series",
+          "transitions",
+          "feedback",
+          "config"
+        ],
+        "title": "ConsoleSnapshot"
+      },
+      "ConsoleTransition": {
+        "properties": {
+          "marker_ms": {
+            "type": "integer",
+            "title": "Marker Ms"
+          },
+          "boot_id": {
+            "type": "string",
+            "title": "Boot Id"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "from_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_state": {
+            "$ref": "#/components/schemas/PresenceState"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "marker_ms",
+          "boot_id",
+          "seq",
+          "from_state",
+          "to_state",
+          "reason"
+        ],
+        "title": "ConsoleTransition"
+      },
+      "ConsoleWindow": {
+        "properties": {
+          "start_ms": {
+            "type": "integer",
+            "title": "Start Ms"
+          },
+          "end_ms": {
+            "type": "integer",
+            "title": "End Ms"
+          },
+          "hours": {
+            "type": "number",
+            "title": "Hours"
+          },
+          "time_basis": {
+            "type": "string",
+            "const": "observed_at_ms_with_receive_fallback",
+            "title": "Time Basis"
+          },
+          "bucket_ms": {
+            "type": "integer",
+            "title": "Bucket Ms"
+          },
+          "sample_count": {
+            "type": "integer",
+            "title": "Sample Count"
+          },
+          "returned_points": {
+            "type": "integer",
+            "title": "Returned Points"
+          },
+          "downsampled": {
+            "type": "boolean",
+            "title": "Downsampled"
+          },
+          "transition_count": {
+            "type": "integer",
+            "title": "Transition Count"
+          },
+          "transitions_truncated": {
+            "type": "boolean",
+            "title": "Transitions Truncated"
+          },
+          "feedback_count": {
+            "type": "integer",
+            "title": "Feedback Count"
+          },
+          "feedback_truncated": {
+            "type": "boolean",
+            "title": "Feedback Truncated"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start_ms",
+          "end_ms",
+          "hours",
+          "time_basis",
+          "bucket_ms",
+          "sample_count",
+          "returned_points",
+          "downsampled",
+          "transition_count",
+          "transitions_truncated",
+          "feedback_count",
+          "feedback_truncated"
+        ],
+        "title": "ConsoleWindow"
       },
       "FeedbackCreate": {
         "properties": {
@@ -1178,6 +1884,17 @@
             "type": "string",
             "title": "Time Quality"
           },
+          "applied_config_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Config Revision"
+          },
           "pir": {
             "type": "boolean",
             "title": "Pir"
@@ -1228,6 +1945,7 @@
           "observed_at_ms",
           "received_at_ms",
           "time_quality",
+          "applied_config_revision",
           "pir",
           "mic_rms",
           "mic_envelope",
@@ -1479,6 +2197,17 @@
             "type": "string",
             "title": "Time Quality"
           },
+          "applied_config_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Config Revision"
+          },
           "from_state": {
             "anyOf": [
               {
@@ -1506,6 +2235,7 @@
           "observed_at_ms",
           "received_at_ms",
           "time_quality",
+          "applied_config_revision",
           "from_state",
           "to_state",
           "reason"

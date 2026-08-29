@@ -115,6 +115,7 @@ class SampleOut(StrictModel):
     observed_at_ms: int | None
     received_at_ms: int
     time_quality: str
+    applied_config_revision: int | None
     pir: bool
     mic_rms: float
     mic_envelope: float
@@ -135,6 +136,7 @@ class TransitionOut(StrictModel):
     observed_at_ms: int | None
     received_at_ms: int
     time_quality: str
+    applied_config_revision: int | None
     from_state: PresenceState | None
     to_state: PresenceState
     reason: TransitionReason

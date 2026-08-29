@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily M5GO presence database backup
+Documentation=file:/opt/m5-presence/deploy/devb/README.md
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+RandomizedDelaySec=15min
+AccuracySec=1min
+Unit=m5-presence-backup.service
+
+[Install]
+WantedBy=timers.target

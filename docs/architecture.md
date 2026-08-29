@@ -7,7 +7,8 @@ The project is one Git repository with three separately deployed parts:
 1. The M5GO firmware owns sensor sampling, presence decisions, display power,
    rendering, a bounded telemetry queue, and eventual offline spooling.
 2. The presence API on `devb` owns durable telemetry, feedback, and
-   configuration.
+   configuration. Its same-origin Web Console is an operator view over those
+   APIs; it does not create a second backend or database.
 3. The existing environmental sensor API remains a separate service on `devb`
    while the presence API is introduced.
 
@@ -114,7 +115,8 @@ the same semantic violations.
 
 `contracts/api-v1.openapi.json` is generated from the FastAPI application and
 versions the rest of the HTTP contract, including acknowledgement responses,
-feedback, configuration, pagination envelopes, errors, and bearer auth.
+feedback, configuration, bounded console snapshots, pagination envelopes,
+errors, and bearer auth.
 
 ## Time model
 
@@ -144,6 +146,18 @@ analysis. Feedback uses immutable `(created_at_ms, feedback_id)` ordering. A
 bare list is never presented as a complete history when the requested limit was
 reached.
 
+The console has a deliberately different, bounded analytics query: 15 minutes
+through 24 hours, downsampled to at most 2,000 chart points. Its event timeline
+uses `COALESCE(observed_at_ms, received_at_ms)`. The equivalent window predicate
+and latest-event ordering use a matching composite SQLite expression index.
+Transition and feedback markers use the same event-time rule as chart buckets.
+
+Device health is server-observed. A device is online only when its newest
+telemetry record was received within 120 seconds; `devices.last_seen_at_ms` is
+not used because configuration operations also update that administrative
+field. Calibration aggregates and feedback totals cover the complete selected
+window even when the visible marker list is capped.
+
 ## Device identity
 
 `device_id` is derived once from the ESP32 eFuse base MAC, formatted as
@@ -165,10 +179,27 @@ cosmetic rename would create a different logical device and split history.
   marker, preserving the previous valid configuration across interrupted
   updates.
 - SQLite on `devb` is the authoritative history.
+- A daily systemd timer creates consistent SQLite online-backup snapshots,
+  validates them before atomic publication, and rotates daily and weekly
+  generations independently in a root-managed state directory that the API's
+  dynamic user cannot modify. These local snapshots protect against migration
+  and operator mistakes; they do not protect against loss of the devb disk.
 - The M5GO's internal flash is only an outage spool; it is not the primary
   database.
 - Sensor samples and transitions are append-only. Configuration and human
   feedback are the only user-editable domains.
+
+## Database migration and recovery
+
+Database schema v3 adds nullable `applied_config_revision` to every telemetry
+record. New records always store the batch revision. Existing schema-v2 records
+migrate to `NULL`: the device-level applied revision is only a maximum and
+cannot reconstruct which historical record used which settings.
+
+Deployment takes and validates an online backup before the v2-to-v3 service
+restart. Rolling the code back across this schema boundary also requires
+restoring that pre-migration backup because older application versions reject a
+newer `PRAGMA user_version`.
 
 ## Hardware invariants
 

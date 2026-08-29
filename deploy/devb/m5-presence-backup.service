@@ -1,0 +1,40 @@
+[Unit]
+Description=Back up the M5GO presence SQLite database
+Documentation=file:/opt/m5-presence/deploy/devb/README.md
+RequiresMountsFor=/var/lib/m5-presence /var/lib/m5-presence-backup
+
+[Service]
+Type=oneshot
+Environment="PRESENCE_DB_PATH=/var/lib/m5-presence/presence.db"
+Environment="PRESENCE_BACKUP_DIR=/var/lib/m5-presence-backup"
+Environment="PRESENCE_BACKUP_DAILY_RETENTION=14"
+Environment="PRESENCE_BACKUP_WEEKLY_RETENTION=8"
+Environment="PRESENCE_BACKUP_WEEKDAY=sun"
+Environment="PRESENCE_BACKUP_MIN_FREE_BYTES=1073741824"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/python3 /opt/m5-presence/deploy/devb/backup_presence_db.py
+UMask=0077
+StateDirectory=m5-presence-backup
+StateDirectoryMode=0700
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=10min
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/m5-presence-backup
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=yes
+SystemCallArchitectures=native

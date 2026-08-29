@@ -74,6 +74,10 @@ class TelemetryRecord(Base):
     observed_at_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     received_at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     time_quality: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Schema-v2 databases did not retain the batch revision per record. Keep
+    # migrated rows nullable rather than incorrectly labelling them revision 0;
+    # every record ingested by schema v3 receives a concrete revision.
+    applied_config_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
     __table_args__ = (

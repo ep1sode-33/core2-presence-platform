@@ -23,6 +23,14 @@ human feedback, and serves revisioned device configuration. Retries are
 idempotent on `(device_id, boot_id, seq)`; conflicting reuse of an identity is
 rejected instead of silently replacing history.
 
+The same FastAPI service also serves a responsive operator console at
+`/console`. After a bearer token is entered, it shows server-observed device
+health, presence/PIR/microphone timelines, calibration summaries, feedback
+markers, desired-versus-applied configuration state, and an explicitly
+confirmed configuration editor. The token is kept only in that browser tab's
+session storage. Console data endpoints use the same bearer authentication as
+the rest of `/v1/devices/...`.
+
 ```sh
 make backend-venv
 make backend-test
@@ -74,7 +82,9 @@ revision is validated against the device's fixed capacities, written to an
 atomic two-slot NVS record, and handed to the hardware loop through a bounded
 mailbox. The loop applies the complete snapshot at one boundary and stamps all
 subsequent telemetry with that revision; the uploader never mixes revisions in
-one batch.
+one batch. Schema-v3 backend rows retain that revision per telemetry record.
+Rows migrated from the older schema report it as unknown (`null`) because the
+historical value cannot be reconstructed safely from a device-level maximum.
 
 The three physical buttons are A=`PRESENT`, B=`WAKE`, and C=`ABSENT`. A and C
 snapshot an immediate pre-button sample with the human label; B only wakes the
@@ -187,6 +197,12 @@ application as one Uvicorn process with two explicitly bound sockets:
 `100.117.242.46:8080` and `192.168.0.46:8080`. The accompanying systemd drop-in
 switches `env-api.service` to that launcher without adding a reverse proxy or
 starting a second sampler process.
+
+The presence database has a separate daily systemd backup timer. It uses
+SQLite's online backup API, validates each snapshot with full integrity and
+foreign-key checks, publishes it atomically, and retains 14 daily plus 8 weekly
+generations by default. See `deploy/devb/README.md` for installation, restore
+boundaries, and verification commands.
 
 ## Existing firmware backup
 

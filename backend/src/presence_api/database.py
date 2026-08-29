@@ -11,7 +11,7 @@ from .models import Base
 
 
 class Database:
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -41,13 +41,16 @@ class Database:
             schema_version = connection.execute(
                 text("PRAGMA user_version")
             ).scalar_one()
-            if schema_version not in (0, 1, self.SCHEMA_VERSION):
+            if schema_version not in (0, 1, 2, self.SCHEMA_VERSION):
                 raise RuntimeError(
                     f"unsupported database schema version: {schema_version}"
                 )
         Base.metadata.create_all(self.engine)
-        if schema_version < self.SCHEMA_VERSION:
+        if schema_version < 2:
             self._migrate_to_v2()
+        if schema_version < 3:
+            self._migrate_to_v3()
+        self._ensure_query_indexes()
 
     def _migrate_to_v2(self) -> None:
         with self.engine.begin() as connection:
@@ -109,6 +112,39 @@ class Database:
                 )
             )
             connection.execute(text("PRAGMA user_version=2"))
+
+    def _migrate_to_v3(self) -> None:
+        with self.engine.begin() as connection:
+            telemetry_columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(telemetry_records)")
+                )
+            }
+            if "applied_config_revision" not in telemetry_columns:
+                # The batch revision was not persisted before v3, and the
+                # device-level maximum cannot reconstruct record history.
+                # NULL deliberately represents an unknown legacy revision.
+                connection.execute(
+                    text(
+                        "ALTER TABLE telemetry_records "
+                        "ADD COLUMN applied_config_revision INTEGER"
+                    )
+                )
+            connection.execute(text("PRAGMA user_version=3"))
+
+    def _ensure_query_indexes(self) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_records_device_event "
+                    "ON telemetry_records ("
+                    "device_id, "
+                    "COALESCE(observed_at_ms, received_at_ms), "
+                    "boot_id, seq"
+                    ")"
+                )
+            )
 
     @contextmanager
     def session(self) -> Iterator[Session]:

@@ -47,9 +47,11 @@ def test_ingest_and_replay_are_idempotent(
     assert len(samples["items"]) == 1
     assert samples["truncated"] is False
     assert samples["next_cursor"] is None
+    assert samples["items"][0]["applied_config_revision"] == 0
     assert len(transitions["items"]) == 1
     assert transitions["truncated"] is False
     assert transitions["next_cursor"] is None
+    assert transitions["items"][0]["applied_config_revision"] == 0
 
 
 def test_conflicting_record_rolls_back_batch(
@@ -120,7 +122,44 @@ def test_ingest_accepts_issued_applied_config_revision(
     assert response.json()["stored"] == len(revision_one_batch["records"])
     assert response.json()["duplicates"] == 0
     assert response.json()["desired_config_revision"] == 1
-    assert client.get(f"/v1/devices/{DEVICE}/latest").status_code == 200
+    latest = client.get(f"/v1/devices/{DEVICE}/latest")
+    assert latest.status_code == 200
+    assert latest.json()["applied_config_revision"] == 1
+
+    samples = client.get(f"/v1/devices/{DEVICE}/samples").json()["items"]
+    transitions = client.get(f"/v1/devices/{DEVICE}/transitions").json()["items"]
+    assert samples[0]["applied_config_revision"] == 1
+    assert transitions[0]["applied_config_revision"] == 1
+
+
+def test_regrouped_duplicate_cannot_change_record_revision(
+    client: TestClient, sample_batch: dict
+) -> None:
+    endpoint = f"/v1/devices/{DEVICE}/batches"
+    original = deepcopy(sample_batch)
+    original["records"] = [original["records"][0]]
+    assert client.post(endpoint, json=original).status_code == 200
+
+    config_endpoint = f"/v1/devices/{DEVICE}/config"
+    initial_config = client.get(config_endpoint).json()["config"]
+    issued = client.put(
+        config_endpoint,
+        json={
+            "base_revision": 0,
+            "created_by": "revision-conflict-test",
+            "config": initial_config,
+        },
+    )
+    assert issued.status_code == 200, issued.text
+
+    regrouped = deepcopy(original)
+    regrouped["batch_id"] = "boot000000000001:revision-conflict"
+    regrouped["applied_config_revision"] = 1
+    response = client.post(endpoint, json=regrouped)
+
+    assert response.status_code == 409
+    latest = client.get(f"/v1/devices/{DEVICE}/latest").json()
+    assert latest["applied_config_revision"] == 0
 
 
 def test_clock_anchor_backfills_earlier_records(

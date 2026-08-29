@@ -34,3 +34,23 @@ both artifacts; `make contract-check` fails if either has drifted.
 
 The production service will use port 8081 so the existing environmental sensor
 API can remain on port 8080.
+
+## Presence Console
+
+Open `/console` on the same origin as the API, for example
+`http://192.168.0.46:8081/console`. The HTML, CSS, and JavaScript shell is
+public, but every device-data request and every configuration write requires
+the existing bearer token. The browser keeps the token in per-tab
+`sessionStorage`; it is not embedded in an asset or written to persistent local
+storage.
+
+The console's online indicator means the server received telemetry within the
+last 120 seconds. Configuration reads or writes do not refresh that signal.
+Charts use reconstructed `observed_at_ms` when available and fall back to
+immutable server `received_at_ms` for unanchored data. Queries are capped at a
+24-hour window and downsampled to a bounded number of chart points.
+
+Configuration changes show a field-by-field review dialog and require a second
+confirmation before issuing a revision. The API still enforces optimistic
+concurrency through `base_revision`; an intervening update returns HTTP 409 and
+the console reloads the current values.
