@@ -89,7 +89,7 @@ schema query must print `2`; the backup command itself must already have printed
 both integrity checks as `ok`.
 
 ```sh
-python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute("PRAGMA user_version").fetchone()[0])' \
+python3 -c 'import sqlite3,sys; c=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro&immutable=1", uri=True); print(c.execute("PRAGMA user_version").fetchone()[0])' \
   /var/lib/m5-presence-backup/pre-schema-v3/presence-daily-YYYYMMDDTHHMMSSZ.sqlite3
 sha256sum \
   /var/lib/m5-presence-backup/pre-schema-v3/presence-daily-YYYYMMDDTHHMMSSZ.sqlite3
