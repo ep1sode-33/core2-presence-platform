@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from importlib.resources import files
+from ipaddress import ip_address, ip_network
 from math import ceil
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Integer, and_, case, cast, func, or_, select
@@ -14,6 +14,7 @@ from .database import Database
 from .models import Device, Feedback, Sample, StateTransition, TelemetryRecord
 from .schemas import (
     DEVICE_ID_PATTERN,
+    ConfigPut,
     ConfigResponse,
     PresenceState,
     SampleOut,
@@ -22,6 +23,7 @@ from .service import NotFoundError, PresenceService, utc_now_ms
 
 ONLINE_THRESHOLD_MS = 120_000
 MAX_EVENT_MARKERS = 2_000
+_CONSOLE_ALLOWED_NETWORKS = (ip_network("192.168.0.0/24"),)
 _ASSET_MEDIA_TYPES = {
     "console.css": "text/css; charset=utf-8",
     "console.js": "text/javascript; charset=utf-8",
@@ -215,12 +217,28 @@ def _asset_response(name: str, media_type: str) -> Response:
     )
 
 
+def require_console_lan(request: Request) -> None:
+    """Keep the tokenless operator console on the trusted home LAN."""
+    if request.client is None:
+        raise HTTPException(status_code=403, detail="console is available only on LAN")
+    try:
+        client_address = ip_address(request.client.host)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=403, detail="console is available only on LAN"
+        ) from error
+    if not any(client_address in network for network in _CONSOLE_ALLOWED_NETWORKS):
+        raise HTTPException(status_code=403, detail="console is available only on LAN")
+
+
 def create_console_router(
     database: Database,
     service: PresenceService,
-    require_api_token: Callable[..., None],
 ) -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(
+        dependencies=[Depends(require_console_lan)],
+        responses={403: {"description": "Console is available only on the LAN"}},
+    )
 
     @router.get("/console", include_in_schema=False)
     def console_page() -> Response:
@@ -233,12 +251,7 @@ def create_console_router(
             raise HTTPException(status_code=404, detail="console asset not found")
         return _asset_response(asset_name, media_type)
 
-    protected = APIRouter(
-        dependencies=[Depends(require_api_token)],
-        responses={401: {"description": "Missing or invalid bearer token"}},
-    )
-
-    @protected.get("/v1/console/devices", response_model=ConsoleDeviceList)
+    @router.get("/v1/console/devices", response_model=ConsoleDeviceList)
     def list_console_devices() -> ConsoleDeviceList:
         now_ms = utc_now_ms()
         event_time = func.coalesce(
@@ -308,8 +321,8 @@ def create_console_router(
             ]
         return ConsoleDeviceList(server_utc_ms=now_ms, items=items)
 
-    @protected.get(
-        "/v1/devices/{device_id}/console",
+    @router.get(
+        "/v1/console/devices/{device_id}/snapshot",
         response_model=ConsoleSnapshot,
         responses={404: {"description": "Device does not exist"}},
     )
@@ -630,5 +643,14 @@ def create_console_router(
             config=config,
         )
 
-    router.include_router(protected)
+    @router.put(
+        "/v1/console/devices/{device_id}/config",
+        response_model=ConfigResponse,
+        responses={409: {"description": "Stale configuration revision"}},
+    )
+    def put_console_config(
+        device_id: ConsoleDeviceId, update: ConfigPut
+    ) -> ConfigResponse:
+        return service.put_config(device_id, update)
+
     return router

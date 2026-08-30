@@ -18,7 +18,7 @@ On devb, install only runtime dependencies with
 
 The default database is `data/presence.db`. Override it with
 `PRESENCE_DB_PATH`. Set `PRESENCE_API_TOKEN` to require
-`Authorization: Bearer ...` on every endpoint except `/v1/healthz`.
+`Authorization: Bearer ...` on the device API under `/v1/devices/...`.
 The devb systemd unit loads the same token from
 `/etc/m5-presence.token` as a systemd credential, keeping it out of the
 repository and process command line. A credential takes precedence over an
@@ -38,11 +38,13 @@ API can remain on port 8080.
 ## Presence Console
 
 Open `/console` on the same origin as the API, for example
-`http://192.168.0.46:8081/console`. The HTML, CSS, and JavaScript shell is
-public, but every device-data request and every configuration write requires
-the existing bearer token. The browser keeps the token in per-tab
-`sessionStorage`; it is not embedded in an asset or written to persistent local
-storage.
+`http://192.168.0.46:8081/console`. It loads directly without a login or bearer
+token. The shell, assets, bounded data endpoints, and dedicated configuration
+write endpoint all reject clients outside `192.168.0.0/24` with HTTP 403. The
+server uses the direct socket peer address and ignores forwarding headers; no
+reverse proxy is part of this trust boundary. Consequently, every host on that
+LAN can read Console telemetry and issue a confirmed configuration revision.
+The ordinary `/v1/devices/...` endpoints remain bearer-protected.
 
 The console's online indicator means the server received telemetry within the
 last 120 seconds. Configuration reads or writes do not refresh that signal.

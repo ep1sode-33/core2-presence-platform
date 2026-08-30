@@ -116,7 +116,7 @@ the same semantic violations.
 `contracts/api-v1.openapi.json` is generated from the FastAPI application and
 versions the rest of the HTTP contract, including acknowledgement responses,
 feedback, configuration, bounded console snapshots, pagination envelopes,
-errors, and bearer auth.
+errors, bearer auth, and the Console's LAN-only routes.
 
 ## Time model
 
@@ -216,11 +216,15 @@ The following validated behavior must survive every firmware refactor:
 ## Transport security boundary
 
 The first deployed device transport is plain HTTP to the explicitly bound
-`192.168.0.46:8081` trusted-LAN endpoint. Bearer authentication prevents
-unauthenticated API use but does not encrypt credentials or telemetry. The
-service must not be exposed to an untrusted LAN or public interface. HTTPS is
-not accepted by provisioning until the firmware has a real certificate trust
-configuration; it never falls back to an insecure TLS client.
+`192.168.0.46:8081` trusted-LAN endpoint. The ordinary device API requires a
+bearer token, but HTTP does not encrypt credentials or telemetry. The Web
+Console deliberately uses a different boundary: its shell, data reads, and
+confirmed configuration writes require the direct socket peer to be in
+`192.168.0.0/24` and never trust forwarding headers. Every host on that LAN is
+therefore a Console administrator. The service must not be exposed to an
+untrusted LAN or public interface. HTTPS is not accepted by provisioning until
+the firmware has a real certificate trust configuration; it never falls back
+to an insecure TLS client.
 
 The two display feeds are credential-free GETs and never receive the presence
 Bearer token. The LAN environment feed and first Open-Meteo integration also

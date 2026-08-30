@@ -4,9 +4,7 @@ import os
 import socket
 
 import uvicorn
-
 from presence_api.main import app
-
 
 LISTEN_ADDRESSES = tuple(
     address.strip()
@@ -41,7 +39,7 @@ def main() -> None:
             listener.close()
         raise
 
-    uvicorn.Server(uvicorn.Config(app=app, log_level="info")).run(
+    uvicorn.Server(uvicorn.Config(app=app, log_level="info", proxy_headers=False)).run(
         sockets=listeners
     )
 

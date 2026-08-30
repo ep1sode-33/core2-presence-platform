@@ -1,6 +1,5 @@
 "use strict";
 
-const TOKEN_KEY = "presence.console.token";
 const INTEGER_CONFIG_FIELDS = new Set([
   "minimum_on_ms",
   "pir_hold_ms",
@@ -12,9 +11,6 @@ const INTEGER_CONFIG_FIELDS = new Set([
 ]);
 
 const elements = {
-  token: document.querySelector("#tokenInput"),
-  connect: document.querySelector("#connectButton"),
-  forget: document.querySelector("#forgetButton"),
   device: document.querySelector("#deviceSelect"),
   hours: document.querySelector("#hoursSelect"),
   refresh: document.querySelector("#refreshButton"),
@@ -71,13 +67,8 @@ function setConnection(text, tone) {
   elements.connection.dataset.tone = tone;
 }
 
-function token() {
-  return sessionStorage.getItem(TOKEN_KEY) || "";
-}
-
-function authHeaders(includeJson = false) {
+function requestHeaders(includeJson = false) {
   const headers = new Headers();
-  if (token()) headers.set("Authorization", `Bearer ${token()}`);
   if (includeJson) headers.set("Content-Type", "application/json");
   return headers;
 }
@@ -85,7 +76,7 @@ function authHeaders(includeJson = false) {
 async function apiFetch(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    headers: options.headers || authHeaders(Boolean(options.body)),
+    headers: options.headers || requestHeaders(Boolean(options.body)),
     cache: "no-store",
   });
   if (!response.ok) {
@@ -156,12 +147,8 @@ function fillDeviceList(devices) {
 }
 
 async function connect() {
-  const supplied = elements.token.value.trim();
-  if (supplied) sessionStorage.setItem(TOKEN_KEY, supplied);
-  else sessionStorage.removeItem(TOKEN_KEY);
   configDirty = false;
   configEditBase = null;
-  elements.token.value = "";
   setConnection("Connecting", "loading");
   setMessage("Loading devices…");
   try {
@@ -176,8 +163,8 @@ async function connect() {
     startRefreshTimer();
   } catch (error) {
     stopRefreshTimer();
-    setConnection(error.status === 401 ? "Unauthorized" : "Unavailable", "offline");
-    setMessage(error.status === 401 ? "Invalid or missing bearer token." : error.message, "error");
+    setConnection(error.status === 403 ? "Outside LAN" : "Unavailable", "offline");
+    setMessage(error.status === 403 ? "This console is available only on the home LAN." : error.message, "error");
   }
 }
 
@@ -191,16 +178,16 @@ async function loadSnapshot({ quiet = false } = {}) {
     const deviceId = encodeURIComponent(elements.device.value);
     const hours = encodeURIComponent(elements.hours.value);
     snapshot = await apiFetch(
-      `/v1/devices/${deviceId}/console?hours=${hours}&max_points=720`,
+      `/v1/console/devices/${deviceId}/snapshot?hours=${hours}&max_points=720`,
       { signal: controller.signal },
     );
     renderSnapshot(snapshot);
     setMessage(`Updated ${formatEastern(snapshot.server_utc_ms, true)} Eastern`, "success");
   } catch (error) {
     if (error.name === "AbortError") return;
-    setConnection(error.status === 401 ? "Unauthorized" : "Unavailable", "offline");
+    setConnection(error.status === 403 ? "Outside LAN" : "Unavailable", "offline");
     setMessage(error.message, "error");
-    if (error.status === 401) stopRefreshTimer();
+    if (error.status === 403) stopRefreshTimer();
   } finally {
     if (snapshotController === controller) snapshotController = null;
   }
@@ -316,9 +303,9 @@ async function applyConfig() {
   elements.apply.disabled = true;
   try {
     const deviceId = encodeURIComponent(reviewed.deviceId);
-    await apiFetch(`/v1/devices/${deviceId}/config`, {
+    await apiFetch(`/v1/console/devices/${deviceId}/config`, {
       method: "PUT",
-      headers: authHeaders(true),
+      headers: requestHeaders(true),
       body: JSON.stringify({
         base_revision: reviewed.baseRevision,
         created_by: "presence-console",
@@ -486,17 +473,6 @@ function stopRefreshTimer() {
   refreshTimer = null;
 }
 
-elements.connect.addEventListener("click", connect);
-elements.forget.addEventListener("click", () => {
-  sessionStorage.removeItem(TOKEN_KEY);
-  elements.token.value = "";
-  stopRefreshTimer();
-  if (snapshotController) snapshotController.abort();
-  configDirty = false;
-  configEditBase = null;
-  setConnection("Token forgotten", "neutral");
-  setMessage("This tab no longer holds a bearer token.");
-});
 elements.refresh.addEventListener("click", () => loadSnapshot());
 elements.device.addEventListener("change", () => {
   configDirty = false;
@@ -514,7 +490,7 @@ elements.confirm.addEventListener("change", () => {
 elements.apply.addEventListener("click", applyConfig);
 elements.dialog.addEventListener("close", () => {
   pendingConfig = null;
-  if (elements.device.value && token()) startRefreshTimer();
+  if (elements.device.value) startRefreshTimer();
 });
 window.addEventListener("resize", () => drawTimeline());
 document.addEventListener("visibilitychange", () => {
@@ -522,12 +498,10 @@ document.addEventListener("visibilitychange", () => {
     stopRefreshTimer();
     if (snapshotController) snapshotController.abort();
   }
-  else if (elements.device.value && token()) {
+  else if (elements.device.value) {
     loadSnapshot({ quiet: true });
     startRefreshTimer();
   }
 });
 
-if (token()) {
-  setMessage("A bearer token is available for this tab. Connect to load devices.");
-}
+connect();

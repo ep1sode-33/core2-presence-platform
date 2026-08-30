@@ -42,10 +42,14 @@ curl --fail http://192.168.0.46:8081/v1/healthz
 curl --fail http://100.117.242.46:8081/v1/healthz
 ```
 
-All device-data and console-data endpoints require the bearer token.
-`/v1/healthz`, the static `/console` shell and assets, and FastAPI's API schema
-and documentation are public on the two private interfaces; none contains a
-credential or device telemetry.
+All ordinary device-data endpoints require the bearer token. The Console shell,
+assets, bounded data endpoints, and its dedicated configuration-write endpoint
+do not use a token; they accept only a direct client address in
+`192.168.0.0/24` and return HTTP 403 to loopback, Tailscale, and every other
+source range. Forwarding headers are disabled, so they cannot widen that
+boundary. `/v1/healthz`, FastAPI's API schema, and documentation remain public
+on the two existing private listeners, but contain no credential or device
+telemetry.
 
 ## SQLite backups
 

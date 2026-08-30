@@ -139,20 +139,6 @@ main {
 
 .panel { padding: 1.15rem; }
 
-.access-panel {
-  display: grid;
-  grid-template-columns: minmax(14rem, 1fr) minmax(28rem, 1.5fr);
-  align-items: end;
-  gap: 1.2rem;
-}
-
-.access-controls {
-  display: grid;
-  grid-template-columns: minmax(12rem, 1fr) auto auto;
-  align-items: end;
-  gap: 0.6rem;
-}
-
 .toolbar {
   display: grid;
   grid-template-columns: minmax(13rem, 1fr) 10rem auto minmax(10rem, 2fr);
@@ -228,7 +214,7 @@ dialog::backdrop { background: rgb(3 7 11 / 78%); backdrop-filter: blur(5px); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 0.7rem; }
 
 @media (max-width: 900px) {
-  .access-panel, .two-column { grid-template-columns: 1fr; }
+  .two-column { grid-template-columns: 1fr; }
   .toolbar { grid-template-columns: 1fr 1fr auto; }
   .message { grid-column: 1 / -1; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
@@ -238,8 +224,8 @@ dialog::backdrop { background: rgb(3 7 11 / 78%); backdrop-filter: blur(5px); }
 @media (max-width: 580px) {
   .site-header { align-items: flex-start; }
   .connection-state { margin-top: 0.35rem; }
-  .access-controls, .toolbar, .metric-grid, .config-form { grid-template-columns: 1fr; }
-  .access-controls button, .toolbar button { width: 100%; }
+  .toolbar, .metric-grid, .config-form { grid-template-columns: 1fr; }
+  .toolbar button { width: 100%; }
   .message, .form-actions { grid-column: auto; }
   .form-actions { align-items: stretch; flex-direction: column; }
   .section-heading { flex-direction: column; }

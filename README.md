@@ -24,12 +24,12 @@ idempotent on `(device_id, boot_id, seq)`; conflicting reuse of an identity is
 rejected instead of silently replacing history.
 
 The same FastAPI service also serves a responsive operator console at
-`/console`. After a bearer token is entered, it shows server-observed device
-health, presence/PIR/microphone timelines, calibration summaries, feedback
-markers, desired-versus-applied configuration state, and an explicitly
-confirmed configuration editor. The token is kept only in that browser tab's
-session storage. Console data endpoints use the same bearer authentication as
-the rest of `/v1/devices/...`.
+`/console`. It loads without a token and shows server-observed device health,
+presence/PIR/microphone timelines, calibration summaries, feedback markers,
+desired-versus-applied configuration state, and an explicitly confirmed
+configuration editor. The entire Console surface, including configuration
+writes, accepts only direct clients in `192.168.0.0/24`. The existing device
+API under `/v1/devices/...` remains bearer-authenticated.
 
 ```sh
 make backend-venv

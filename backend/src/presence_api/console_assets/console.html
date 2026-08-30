@@ -15,37 +15,16 @@
       <h1>Presence Console</h1>
     </div>
     <div class="connection-state" id="connectionState" data-tone="neutral">
-      Not connected
+      Loading
     </div>
   </header>
 
   <main>
-    <section class="panel access-panel" aria-labelledby="accessTitle">
-      <div>
-        <h2 id="accessTitle">Connect</h2>
-        <p class="muted">
-          The bearer token stays in this browser tab's session storage and is
-          sent only in the Authorization header.
-        </p>
-      </div>
-      <div class="access-controls">
-        <label>
-          Bearer token
-          <input id="tokenInput" type="password" autocomplete="off"
-                 spellcheck="false" placeholder="Paste token">
-        </label>
-        <button id="connectButton" type="button">Connect</button>
-        <button id="forgetButton" class="secondary" type="button">
-          Forget token
-        </button>
-      </div>
-    </section>
-
     <section class="toolbar" aria-label="Dashboard controls">
       <label>
         Device
         <select id="deviceSelect" disabled>
-          <option value="">Connect to load devices</option>
+          <option value="">Loading devices…</option>
         </select>
       </label>
       <label>
@@ -105,7 +84,7 @@
         </canvas>
       </div>
       <p class="muted chart-caption" id="chartCaption">
-        Connect to load telemetry.
+        Loading telemetry…
       </p>
     </section>
 

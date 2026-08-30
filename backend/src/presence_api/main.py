@@ -229,7 +229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.put_config(device_id, update)
 
     app.include_router(router)
-    app.include_router(create_console_router(database, service, require_api_token))
+    app.include_router(create_console_router(database, service))
     return app
 
 

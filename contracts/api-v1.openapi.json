@@ -655,26 +655,16 @@
               }
             }
           },
-          "401": {
-            "description": "Missing or invalid bearer token"
+          "403": {
+            "description": "Console is available only on the LAN"
           }
-        },
-        "security": [
-          {
-            "PresenceBearer": []
-          }
-        ]
+        }
       }
     },
-    "/v1/devices/{device_id}/console": {
+    "/v1/console/devices/{device_id}/snapshot": {
       "get": {
         "summary": "Console Snapshot",
-        "operationId": "console_snapshot_v1_devices__device_id__console_get",
-        "security": [
-          {
-            "PresenceBearer": []
-          }
-        ],
+        "operationId": "console_snapshot_v1_console_devices__device_id__snapshot_get",
         "parameters": [
           {
             "name": "device_id",
@@ -724,11 +714,69 @@
               }
             }
           },
-          "401": {
-            "description": "Missing or invalid bearer token"
+          "403": {
+            "description": "Console is available only on the LAN"
           },
           "404": {
             "description": "Device does not exist"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/console/devices/{device_id}/config": {
+      "put": {
+        "summary": "Put Console Config",
+        "operationId": "put_console_config_v1_console_devices__device_id__config_put",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigPut"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "409": {
+            "description": "Stale configuration revision"
           },
           "422": {
             "description": "Validation Error",
