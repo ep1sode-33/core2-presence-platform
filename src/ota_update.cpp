@@ -6,13 +6,18 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_spi_flash.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #endif
 
 namespace {
 
 #if defined(ARDUINO_ARCH_ESP32)
-static_assert(kOtaMaximumWriteChunkSize <= SPI_FLASH_SEC_SIZE,
-              "OTA writes must touch at most one new erase sector");
+static_assert(kOtaMaximumWriteChunkSize == SPI_FLASH_SEC_SIZE,
+              "OTA download chunks must match one flash erase sector");
+
+StaticSemaphore_t flashSensorGuardStorage = {};
+SemaphoreHandle_t flashSensorGuard = nullptr;
 
 struct Esp32OtaContext {
   esp_ota_handle_t handle = 0;
@@ -24,7 +29,8 @@ Esp32OtaContext productionContext;
 
 bool esp32UpdateBegin(void* rawContext, uint32_t imageSize) {
   auto* context = static_cast<Esp32OtaContext*>(rawContext);
-  if (context == nullptr || context->active) {
+  if (context == nullptr || context->active ||
+      !otaInitializeFlashSensorGuard()) {
     return false;
   }
   context->partition = esp_ota_get_next_update_partition(nullptr);
@@ -37,9 +43,16 @@ bool esp32UpdateBegin(void* rawContext, uint32_t imageSize) {
   // A known image size asks ESP-IDF to erase the full target range inside
   // esp_ota_begin(), which stalls the other core long enough to violate the
   // measured input/sampling safety gate. Our authenticated stream is strictly
-  // sequential, so erase at most one newly touched sector per bounded write.
-  if (esp_ota_begin(context->partition, OTA_WITH_SEQUENTIAL_WRITES,
-                    &context->handle) != ESP_OK) {
+  // sequential. The downloader additionally splits writes at sector
+  // boundaries, so each bounded transaction erases at most one new sector.
+  if (!otaLockFlashSensorGuard(500)) {
+    context->partition = nullptr;
+    return false;
+  }
+  const esp_err_t beginResult = esp_ota_begin(
+      context->partition, OTA_WITH_SEQUENTIAL_WRITES, &context->handle);
+  otaUnlockFlashSensorGuard();
+  if (beginResult != ESP_OK) {
     context->partition = nullptr;
     return false;
   }
@@ -50,10 +63,12 @@ bool esp32UpdateBegin(void* rawContext, uint32_t imageSize) {
 size_t esp32UpdateWrite(void* rawContext, const uint8_t* bytes, size_t size) {
   auto* context = static_cast<Esp32OtaContext*>(rawContext);
   if (context == nullptr || !context->active || bytes == nullptr ||
-      esp_ota_write(context->handle, bytes, size) != ESP_OK) {
+      !otaLockFlashSensorGuard(500)) {
     return 0;
   }
-  return size;
+  const esp_err_t writeResult = esp_ota_write(context->handle, bytes, size);
+  otaUnlockFlashSensorGuard();
+  return writeResult == ESP_OK ? size : 0;
 }
 
 bool esp32UpdateFinish(void* rawContext) {
@@ -61,7 +76,11 @@ bool esp32UpdateFinish(void* rawContext) {
   if (context == nullptr || !context->active) {
     return false;
   }
+  if (!otaLockFlashSensorGuard(500)) {
+    return false;
+  }
   const esp_err_t result = esp_ota_end(context->handle);
+  otaUnlockFlashSensorGuard();
   context->active = false;
   context->handle = 0;
   return result == ESP_OK;
@@ -83,7 +102,13 @@ bool readIdentity(const esp_partition_t* partition,
   }
   OtaApplicationImageIdentity identity = {};
   identity.partitionAddress = partition->address;
-  if (esp_partition_get_sha256(partition, identity.sha256) != ESP_OK ||
+  if (!otaLockFlashSensorGuard(500)) {
+    return false;
+  }
+  const esp_err_t digestResult =
+      esp_partition_get_sha256(partition, identity.sha256);
+  otaUnlockFlashSensorGuard();
+  if (digestResult != ESP_OK ||
       !otaApplicationImageIdentityIsValid(identity)) {
     return false;
   }
@@ -93,6 +118,55 @@ bool readIdentity(const esp_partition_t* partition,
 #endif
 
 }  // namespace
+
+size_t otaSectorBoundedChunkSize(uint32_t bytesWritten, size_t available,
+                                 size_t remaining) {
+  if (available == 0 || remaining == 0) {
+    return 0;
+  }
+  const size_t offset = bytesWritten % kOtaMaximumWriteChunkSize;
+  const size_t sectorRemaining = kOtaMaximumWriteChunkSize - offset;
+  size_t requested = available < remaining ? available : remaining;
+  requested = requested < sectorRemaining ? requested : sectorRemaining;
+  return requested < kOtaMaximumWriteChunkSize
+             ? requested
+             : kOtaMaximumWriteChunkSize;
+}
+
+bool otaInitializeFlashSensorGuard() {
+#if defined(ARDUINO_ARCH_ESP32)
+  if (flashSensorGuard == nullptr) {
+    flashSensorGuard = xSemaphoreCreateMutexStatic(&flashSensorGuardStorage);
+  }
+  return flashSensorGuard != nullptr;
+#else
+  return true;
+#endif
+}
+
+bool otaLockFlashSensorGuard(uint32_t timeoutMs) {
+#if defined(ARDUINO_ARCH_ESP32)
+  if (flashSensorGuard == nullptr) {
+    return false;
+  }
+  TickType_t waitTicks = pdMS_TO_TICKS(timeoutMs);
+  if (timeoutMs != 0 && waitTicks == 0) {
+    waitTicks = 1;
+  }
+  return xSemaphoreTake(flashSensorGuard, waitTicks) == pdTRUE;
+#else
+  (void)timeoutMs;
+  return true;
+#endif
+}
+
+void otaUnlockFlashSensorGuard() {
+#if defined(ARDUINO_ARCH_ESP32)
+  if (flashSensorGuard != nullptr) {
+    xSemaphoreGive(flashSensorGuard);
+  }
+#endif
+}
 
 bool OtaStreamUpdater::begin(const OtaVerifiedRelease& release,
                              const OtaUpdateBackend& backend) {
@@ -294,18 +368,22 @@ bool otaSelectAcceptedApplicationBootPartition(
     const OtaApplicationImageIdentity& expected) {
 #if defined(ARDUINO_ARCH_ESP32)
   const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
-  OtaApplicationImageIdentity actual = {};
   if (!otaApplicationImageIdentityIsValid(expected) || target == nullptr ||
-      !readIdentity(target, &actual) ||
-      !otaApplicationImageIdentityEquals(expected, actual)) {
+      target->address != expected.partitionAddress) {
+    return false;
+  }
+  // The caller has just hashed this exact inactive partition and durably
+  // committed that identity. No writer can mutate it between that check and
+  // this final handoff, so avoid another full-partition flash read after the
+  // terminal safety gate.
+  if (!otaLockFlashSensorGuard(500)) {
     return false;
   }
   const esp_err_t selectResult = esp_ota_set_boot_partition(target);
-  OtaApplicationImageIdentity selected = {};
-  const bool selectedExactly = otaReadBootApplicationIdentity(&selected) &&
-                               otaApplicationImageIdentityEquals(
-                                   expected, selected);
-  return selectResult == ESP_OK && selectedExactly;
+  otaUnlockFlashSensorGuard();
+  const esp_partition_t* selected = esp_ota_get_boot_partition();
+  return selectResult == ESP_OK && selected != nullptr &&
+         selected->address == expected.partitionAddress;
 #else
   (void)expected;
   return false;

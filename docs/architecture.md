@@ -238,12 +238,28 @@ Production OTA streams only the inactive application slot. Before writing, the
 firmware validates the fixed hardware identifier, monotonic counter, canonical
 manifest, and ECDSA P-256 signature against its compiled current/next public
 keys. The sequential stream erases incrementally with each bounded flash write
-instead of pausing the main loop for one bulk erase. It verifies the final byte
-count and SHA-256, then leaves the image in pending-verification state until 30
-seconds of healthy local runtime. Wi-Fi or devb loss is a soft condition;
-failed local boot gates request bootloader rollback. Development OTA is
-separately protected by a per-device secret and exists only in a physically
-opened 120-second LAN window.
+instead of pausing the main loop for one bulk erase. For production OTA, a
+cross-core mutex keeps each flash transaction between ADC microphone windows;
+the resulting pause is still measured by the independent main-loop-gap gate.
+It verifies the final byte count and SHA-256, then leaves the image in
+pending-verification state until 30 seconds of healthy local runtime. Wi-Fi or
+devb loss is a soft
+condition; failed local boot gates request bootloader rollback. Development OTA
+uses the framework uploader, is separately protected by a per-device secret,
+and exists only in a physically opened 120-second LAN window. It retains the
+same measured acceptance gates, but does not yet use the production
+flash/sensor mutex.
+
+All rejectable production safety checks, including the accepted-journal NVS
+commit, finish while the known-good running slot remains selected. Exact
+candidate boot selection is the final guarded flash handoff: trying to
+"restore" the running slot afterward would mark it `NEW` under ESP-IDF rollback
+semantics and destroy the known-good rollback invariant.
+
+The serialized backend HTTP connection also has a transport circuit breaker.
+A send-payload failure, or three consecutive transport failures, closes the
+socket and recycles the station connection. A 60-second cooldown prevents a
+real devb outage from continuously resetting otherwise healthy Wi-Fi.
 
 ## Hardware invariants
 

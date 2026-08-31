@@ -10,6 +10,20 @@
 // and give the Core 0 worker a natural point to yield between flash writes.
 constexpr size_t kOtaMaximumWriteChunkSize = 4096;
 
+// Caps a sequential production download read at the next flash-sector
+// boundary. This guarantees that one esp_ota_write() transaction cannot cause
+// more than one new sector erase even when earlier network reads were short.
+size_t otaSectorBoundedChunkSize(uint32_t bytesWritten, size_t available,
+                                 size_t remaining);
+
+// The classic ESP32 pauses the other core while flash sectors are erased.
+// Serialize production flash operations with the 16 ms ADC sampling window so
+// the pause is measured as a main-loop gap instead of corrupting a microphone
+// window. Initialize once during setup, before the uploader task starts.
+bool otaInitializeFlashSensorGuard();
+bool otaLockFlashSensorGuard(uint32_t timeoutMs);
+void otaUnlockFlashSensorGuard();
+
 struct OtaUpdateBackend {
   void* context = nullptr;
   bool (*begin)(void* context, uint32_t imageSize) = nullptr;

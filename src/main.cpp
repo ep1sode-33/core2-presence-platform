@@ -23,6 +23,7 @@
 #include "operational_log.h"
 #include "ota_boot_validation.h"
 #include "ota_runtime_mailbox.h"
+#include "ota_update.h"
 #include "presence_types.h"
 #include "provisioning_protocol.h"
 #include "runtime_identity.h"
@@ -760,6 +761,14 @@ void sampleMicrophone(uint64_t now) {
     return;
   }
 
+  if (!otaLockFlashSensorGuard(500)) {
+    recordOtaMicrophoneWindow(false, now);
+    micRms = 0.0f;
+    soundActive = false;
+    microphoneHealth = SensorHealthStatus::kFault;
+    return;
+  }
+
   const uint32_t windowStartedUs = micros();
   uint32_t nextSampleUs = micros();
   size_t railSampleCount = 0;
@@ -795,6 +804,7 @@ void sampleMicrophone(uint64_t now) {
     nextSampleUs += kMicSamplePeriodUs;
   }
   const uint32_t windowElapsedUs = micros() - windowStartedUs;
+  otaUnlockFlashSensorGuard();
 
   const MicrophoneWindowHealthInput healthInput = {
       true,
@@ -1918,7 +1928,7 @@ void setup() {
   pinMode(GPIO_NUM_25, OUTPUT);
   digitalWrite(GPIO_NUM_25, LOW);
   ensureDisplayAwake();
-  micBeginOk = beginAnalogMicrophone();
+  micBeginOk = otaInitializeFlashSensorGuard() && beginAnalogMicrophone();
 
   initializeBootDiagnostics();
 

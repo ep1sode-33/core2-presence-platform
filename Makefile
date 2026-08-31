@@ -104,6 +104,11 @@ firmware-unit:
 		test/native/test_control_retry_policy.cpp src/control_retry_policy.cpp \
 		-o $(NATIVE_BUILD)/control_retry_policy_test
 	$(NATIVE_BUILD)/control_retry_policy_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_backend_transport_recovery.cpp \
+		src/backend_transport_recovery.cpp \
+		-o $(NATIVE_BUILD)/backend_transport_recovery_test
+	$(NATIVE_BUILD)/backend_transport_recovery_test
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -pthread -Isrc \
 		test/native/test_health_snapshot.cpp src/health_snapshot.cpp \
 		src/health_json.cpp \

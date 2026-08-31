@@ -13,8 +13,8 @@
 #include <cstring>
 #include <sys/time.h>
 
-#include "device_config_storage.h"
 #include "backlog_policy.h"
+#include "backend_transport_recovery.h"
 #include "command_ack_protocol.h"
 #include "command_journal.h"
 #include "control_protocol.h"
@@ -23,6 +23,7 @@
 #include "core_dump_json.h"
 #include "core_dump_upload.h"
 #include "dashboard_time.h"
+#include "device_config_storage.h"
 #include "feedback_bundle.h"
 #include "feedback_protocol.h"
 #include "feedback_spool_name.h"
@@ -493,7 +494,26 @@ class UploaderWorker {
     return false;
   }
 
-  void endBackendRequest(bool responseFullyConsumed) {
+  void recycleBackendTransport(int status, uint8_t failureCount) {
+    backendHttp_.setReuse(false);
+    backendHttp_.end();
+    backendClient_.stop();
+    const bool reconnectStarted = WiFi.reconnect();
+    if (!reconnectStarted) {
+      WiFi.disconnect(false, false);
+      wifiStarted_ = false;
+      lastWifiBeginMs_ = 0;
+    }
+    wifiWasConnected_ = false;
+    if (wifiReconnectCount_ != UINT32_MAX) {
+      ++wifiReconnectCount_;
+    }
+    Serial.printf("EVENT,wifi,transport_recycle,%d,%u\n", status,
+                  static_cast<unsigned>(failureCount));
+  }
+
+  void endBackendRequest(bool responseFullyConsumed,
+                         int status = HTTP_CODE_OK) {
     if (!responseFullyConsumed) {
       // An unread or partial response must never contaminate the next request
       // on the persistent connection.
@@ -502,6 +522,18 @@ class UploaderWorker {
     backendHttp_.end();
     if (!responseFullyConsumed) {
       backendClient_.stop();
+    }
+    // Receiving any HTTP status proves that the TCP path is alive, even when
+    // the application rejects the request. Only transport-level failures feed
+    // the Wi-Fi circuit breaker.
+    if (responseFullyConsumed || status >= HTTP_CODE_CONTINUE) {
+      backendTransportRecovery_.recordSuccess();
+      return;
+    }
+    const BackendTransportRecoveryDecision decision =
+        backendTransportRecovery_.recordFailure(monotonicMillis(), status);
+    if (decision.shouldRecycle) {
+      recycleBackendTransport(status, decision.failureCount);
     }
   }
 
@@ -673,7 +705,7 @@ class UploaderWorker {
     const bool responseOk = status == HTTP_CODE_OK && body.complete() &&
                             !body.failed() &&
                             readExactAckBody(http, response);
-    endBackendRequest(responseOk);
+    endBackendRequest(responseOk, status);
     if (!responseOk) {
       scheduleCoreDumpRetry(now);
       Serial.printf("EVENT,coredump,retry,%d\n", status);
@@ -939,7 +971,7 @@ class UploaderWorker {
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
-    endBackendRequest(bodyOk);
+    endBackendRequest(bodyOk, status);
     if (!bodyOk) {
       if (status == HTTP_CODE_UNAUTHORIZED) {
         controlOperatorHalted_ = true;
@@ -1060,13 +1092,13 @@ class UploaderWorker {
     http.setAuthorization(workerSettings.apiToken);
     const int status = http.GET();
     if (status == HTTP_CODE_UNAUTHORIZED) {
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       controlOperatorHalted_ = true;
       Serial.println("EVENT,control,operator_halt,401");
       return;
     }
     if (status != HTTP_CODE_OK) {
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       scheduleControlRetry(now);
       Serial.printf("EVENT,control,poll_retry,%d\n", status);
       return;
@@ -1075,7 +1107,7 @@ class UploaderWorker {
     const bool bodyOk = readHttpBodyToBuffer(
         http, controlResponseBytes, kMaximumControlResponseBytes,
         &responseSize);
-    endBackendRequest(bodyOk);
+    endBackendRequest(bodyOk, status);
     if (!bodyOk) {
       scheduleControlRetry(now);
       Serial.println("EVENT,control,poll_bad_body");
@@ -1191,7 +1223,7 @@ class UploaderWorker {
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
-    endBackendRequest(bodyOk);
+    endBackendRequest(bodyOk, status);
     if (!bodyOk) {
       scheduleOperationalLogRetry(now);
       Serial.printf("EVENT,logs,retry,%d\n", status);
@@ -2019,7 +2051,7 @@ class UploaderWorker {
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
-    endBackendRequest(bodyOk);
+    endBackendRequest(bodyOk, status);
     if (!bodyOk) {
       nextOtaReleaseAttemptMs_ = monotonicMillis() + kOtaReleaseRetryMs;
       return false;
@@ -2053,7 +2085,7 @@ class UploaderWorker {
     feedWatchdog();
     const bool ok = status == HTTP_CODE_OK &&
                     readHttpBodyToBuffer(http, output, capacity, outputSize);
-    endBackendRequest(ok);
+    endBackendRequest(ok, status);
     return ok;
   }
 
@@ -2110,12 +2142,12 @@ class UploaderWorker {
     feedWatchdog();
     if (!criticalQueuesSafeForOta() || status != HTTP_CODE_OK ||
         http.getSize() != static_cast<int>(release.manifest().firmwareSize)) {
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       return false;
     }
     OtaStreamUpdater updater;
     if (!updater.begin(release, otaEsp32ApplicationUpdateBackend())) {
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       return false;
     }
     productionImageSize_ = release.manifest().firmwareSize;
@@ -2123,7 +2155,7 @@ class UploaderWorker {
     WiFiClient* stream = http.getStreamPtr();
     if (stream == nullptr) {
       updater.abort();
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       return false;
     }
     stream->setTimeout(1000);
@@ -2133,19 +2165,23 @@ class UploaderWorker {
       feedWatchdog();
       if (consumeSafetyAbort() || !criticalQueuesSafeForOta()) {
         updater.abort();
-        endBackendRequest(false);
+        endBackendRequest(false, status);
         return false;
       }
       const int available = stream->available();
       if (available > 0) {
         const size_t remaining = updater.imageSize() - updater.bytesWritten();
-        const size_t requested = std::min<size_t>(
-            std::min<size_t>(static_cast<size_t>(available), remaining),
-            sizeof(otaImageChunk));
+        const size_t requested = otaSectorBoundedChunkSize(
+            updater.bytesWritten(), static_cast<size_t>(available), remaining);
         const int read = stream->read(otaImageChunk, requested);
-        if (read <= 0 || !updater.write(otaImageChunk,
-                                       static_cast<size_t>(read))) {
-          endBackendRequest(false);
+        if (read <= 0) {
+          endBackendRequest(false, HTTPC_ERROR_CONNECTION_LOST);
+          return false;
+        }
+        if (!updater.write(otaImageChunk, static_cast<size_t>(read))) {
+          // The HTTP stream is still healthy; this is a local flash/update
+          // failure and must not feed the Wi-Fi circuit breaker.
+          endBackendRequest(false, status);
           return false;
         }
         lastProgressMs = monotonicMillis();
@@ -2165,12 +2201,12 @@ class UploaderWorker {
       if (!http.connected() ||
           current - lastProgressMs >= kOtaImageInactivityTimeoutMs) {
         updater.abort();
-        endBackendRequest(false);
+        endBackendRequest(false, HTTPC_ERROR_READ_TIMEOUT);
         return false;
       }
       vTaskDelay(pdMS_TO_TICKS(10));
     }
-    endBackendRequest(true);
+    endBackendRequest(true, status);
     if (consumeSafetyAbort() || !criticalQueuesSafeForOta()) {
       updater.abort();
       return false;
@@ -2388,6 +2424,28 @@ class UploaderWorker {
       return;
     }
     installState_ = acceptedState;
+
+    // Include the accepted-journal NVS commit in the measured safety
+    // contract while the known-good running slot is still selected. Give Core
+    // 1 time to publish the resulting loop-gap/microphone window before the
+    // final boot-selection handoff.
+    vTaskDelay(pdMS_TO_TICKS(50));
+    feedWatchdog();
+    const bool terminalAccepted =
+        !consumeSafetyAbort() && criticalQueuesSafeForOta() &&
+        updateSafetyMetricsAcceptable();
+    if (!terminalAccepted) {
+      safetyAcceptanceFailed_ = true;
+      failProductionRelease(desired, "acceptance_metrics_rejected",
+                            OtaRuntimeError::kImageRejected, false, true);
+      safetyAbortLatched_ = false;
+      return;
+    }
+
+    // This is deliberately the final flash mutation. Re-selecting the running
+    // slot after a rejected handoff would mark that known-good application NEW
+    // under ESP-IDF rollback semantics. All rejectable safety gates therefore
+    // complete before selecting the exact accepted candidate.
     if (!otaSelectAcceptedApplicationBootPartition(acceptedIdentity)) {
       // accepted=true is already durable. Preserve it even if selection or
       // readback is ambiguous; the next boot compares exact running identity.
@@ -2539,7 +2597,7 @@ class UploaderWorker {
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
-    endBackendRequest(bodyOk);
+    endBackendRequest(bodyOk, status);
     if (bodyOk) {
       lastHealthSuccessMs_ = monotonicMillis();
       // Periodicity is derived from lastHealthSuccessMs_. Keep the retry gate
@@ -3377,14 +3435,14 @@ class UploaderWorker {
     http.setAuthorization(workerSettings.apiToken);
     const int status = http.GET();
     if (status == HTTP_CODE_UNAUTHORIZED || status == HTTP_CODE_NOT_FOUND) {
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       operatorHalted_ = true;
       configResult_ = HealthOperationResult::kRejected;
       Serial.printf("EVENT,config,operator_halt,%d\n", status);
       return;
     }
     if (status != HTTP_CODE_OK) {
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       nextConfigPollMs_ = now + kConfigRetryMs;
       Serial.printf("EVENT,config,retry,%d\n", status);
       return;
@@ -3393,7 +3451,7 @@ class UploaderWorker {
     const int responseSize = http.getSize();
     if (responseSize < 0 ||
         responseSize > static_cast<int>(kMaximumConfigResponseBytes)) {
-      endBackendRequest(false);
+      endBackendRequest(false, status);
       nextConfigPollMs_ = now + kConfigRetryMs;
       Serial.println("EVENT,config,retry_bad_response,response_size");
       return;
@@ -3401,7 +3459,7 @@ class UploaderWorker {
     const String response = http.getString();
     const bool bodyOk =
         response.length() == static_cast<size_t>(responseSize);
-    endBackendRequest(bodyOk);
+    endBackendRequest(bodyOk, status);
     if (!bodyOk) {
       nextConfigPollMs_ = now + kConfigRetryMs;
       Serial.println("EVENT,config,retry_bad_response,truncated");
@@ -3686,13 +3744,13 @@ class UploaderWorker {
     if (status == HTTP_CODE_OK && body.complete()) {
       String response;
       if (!readExactAckBody(http, response)) {
-        endBackendRequest(false);
+        endBackendRequest(false, status);
         Serial.printf("EVENT,uploader,retry_bad_ack,%s,bounded_read\n",
                       metadata.batchId);
         scheduleBackoff(now);
         return true;
       }
-      endBackendRequest(true);
+      endBackendRequest(true, status);
       const IngestAckParseResult parsed = parseIngestAck(
           response.c_str(), response.length(), metadata.batchId,
           std::strlen(metadata.batchId), metadata.recordCount,
@@ -3722,7 +3780,7 @@ class UploaderWorker {
       return true;
     }
 
-    endBackendRequest(false);
+    endBackendRequest(false, status);
     if (status == HTTP_CODE_UNAUTHORIZED || status == HTTP_CODE_NOT_FOUND) {
       Serial.printf("EVENT,uploader,operator_halt,%d,%s\n", status,
                     metadata.batchId);
@@ -3821,13 +3879,13 @@ class UploaderWorker {
     if (status == HTTP_CODE_OK) {
       String response;
       if (!readExactAckBody(http, response)) {
-        endBackendRequest(false);
+        endBackendRequest(false, status);
         Serial.printf("EVENT,feedback,wait_retry_bad_ack,%s,bounded_read\n",
                       metadata.telemetryBatchId);
         scheduleBackoff(now);
         return true;
       }
-      endBackendRequest(true);
+      endBackendRequest(true, status);
       const IngestAckParseResult parsed = parseIngestAck(
           response.c_str(), response.length(), metadata.telemetryBatchId,
           std::strlen(metadata.telemetryBatchId), 1, metadata.seq);
@@ -3859,7 +3917,7 @@ class UploaderWorker {
       return true;
     }
 
-    endBackendRequest(false);
+    endBackendRequest(false, status);
     if (status == HTTP_CODE_UNAUTHORIZED || status == HTTP_CODE_NOT_FOUND) {
       Serial.printf("EVENT,feedback,wait_operator_halt,%d,%s\n", status,
                     metadata.telemetryBatchId);
@@ -3962,13 +4020,13 @@ class UploaderWorker {
     if (status == HTTP_CODE_OK) {
       String response;
       if (!readExactAckBody(http, response)) {
-        endBackendRequest(false);
+        endBackendRequest(false, status);
         Serial.printf("EVENT,feedback,ready_retry_bad_ack,%s,bounded_read\n",
                       metadata.feedbackId);
         scheduleBackoff(now);
         return true;
       }
-      endBackendRequest(true);
+      endBackendRequest(true, status);
       const FeedbackAckParseResult parsed = parseFeedbackAck(
           response.c_str(), response.length(), workerIdentity.deviceId,
           expectedRecord);
@@ -3992,7 +4050,7 @@ class UploaderWorker {
       return true;
     }
 
-    endBackendRequest(false);
+    endBackendRequest(false, status);
     if (status == HTTP_CODE_UNAUTHORIZED) {
       Serial.printf("EVENT,feedback,ready_operator_halt,%d,%s\n", status,
                     metadata.feedbackId);
@@ -4075,6 +4133,7 @@ class UploaderWorker {
   OtaSafetyAbortRequest lastSafetyMetrics_ = {};
   WiFiClient backendClient_;
   HTTPClient backendHttp_;
+  BackendTransportRecoveryPolicy backendTransportRecovery_;
   char conflictProbeBatchId_[96] = {};
   char developmentHostname_[33] = {};
   char activeReleaseId_[49] = {};

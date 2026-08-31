@@ -194,6 +194,16 @@ void testStreamedUpdateRejectsImageLengthOverflow() {
   assert(backend.size == 0);
 }
 
+void testSectorBoundedDownloadChunks() {
+  assert(otaSectorBoundedChunkSize(0, 8192, 8192) == 4096);
+  assert(otaSectorBoundedChunkSize(1, 4096, 8192) == 4095);
+  assert(otaSectorBoundedChunkSize(4095, 100, 8192) == 1);
+  assert(otaSectorBoundedChunkSize(4096, 4096, 8192) == 4096);
+  assert(otaSectorBoundedChunkSize(5000, 100, 20) == 20);
+  assert(otaSectorBoundedChunkSize(5000, 0, 20) == 0);
+  assert(otaSectorBoundedChunkSize(5000, 20, 0) == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -202,5 +212,6 @@ int main() {
   testStreamedUpdateRejectsCorruptionAndPartialWrites();
   testStreamedUpdateRejectsOversizedChunks();
   testStreamedUpdateRejectsImageLengthOverflow();
+  testSectorBoundedDownloadChunks();
   return 0;
 }

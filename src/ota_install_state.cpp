@@ -1,5 +1,7 @@
 #include "ota_install_state.h"
 
+#include "ota_update.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -580,13 +582,18 @@ OtaInstallStateStorageResult saveOtaInstallState(
     return OtaInstallStateStorageResult::kInvalidState;
   }
 #if defined(ARDUINO_ARCH_ESP32)
+  if (!otaLockFlashSensorGuard(500)) {
+    return OtaInstallStateStorageResult::kWriteFailed;
+  }
   nvs_handle_t handle = 0;
   if (nvs_open("m5ota", NVS_READWRITE, &handle) != ESP_OK) {
+    otaUnlockFlashSensorGuard();
     return OtaInstallStateStorageResult::kOpenFailed;
   }
   if (nvs_set_blob(handle, "state", blob, sizeof(blob)) != ESP_OK ||
       nvs_commit(handle) != ESP_OK) {
     nvs_close(handle);
+    otaUnlockFlashSensorGuard();
     return OtaInstallStateStorageResult::kWriteFailed;
   }
   uint8_t verified[kOtaInstallStateBlobSize] = {};
@@ -594,6 +601,7 @@ OtaInstallStateStorageResult saveOtaInstallState(
   const esp_err_t readResult =
       nvs_get_blob(handle, "state", verified, &read);
   nvs_close(handle);
+  otaUnlockFlashSensorGuard();
   if (readResult != ESP_OK || read != sizeof(verified) ||
       std::memcmp(blob, verified, sizeof(blob)) != 0) {
     return OtaInstallStateStorageResult::kVerifyFailed;
