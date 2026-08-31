@@ -18,7 +18,14 @@ def test_console_shell_is_lan_only_and_contains_no_token_flow(tmp_path: Path) ->
     app = create_app(
         Settings(database_path=tmp_path / "secure.db", api_token="secret-token")
     )
-    with TestClient(app, client=("192.168.0.42", 50_000)) as client:
+    with TestClient(
+        app,
+        client=("192.168.0.42", 50_000),
+        headers={
+            "Host": "192.168.0.46",
+            "Origin": "http://192.168.0.46",
+        },
+    ) as client:
         page = client.get("/console")
         script = client.get("/console/assets/console.js")
         stylesheet = client.get("/console/assets/console.css")
@@ -42,7 +49,14 @@ def test_console_data_uses_lan_source_while_existing_api_keeps_bearer_auth(
     tmp_path: Path,
 ) -> None:
     app = create_app(Settings(database_path=tmp_path / "secure.db", api_token="secret"))
-    with TestClient(app, client=("192.168.0.42", 50_000)) as client:
+    with TestClient(
+        app,
+        client=("192.168.0.42", 50_000),
+        headers={
+            "Host": "192.168.0.46",
+            "Origin": "http://192.168.0.46",
+        },
+    ) as client:
         devices = client.get("/v1/console/devices")
         assert devices.status_code == 200
         assert devices.json()["items"] == []
@@ -107,6 +121,19 @@ def test_console_rejects_every_source_outside_the_home_lan(
             ).status_code
             == 403
         )
+        assert (
+            client.get(
+                f"/v1/console/devices/{DEVICE}/coredumps", headers=headers
+            ).status_code
+            == 403
+        )
+        assert client.get("/v1/console/releases", headers=headers).status_code == 403
+        assert (
+            client.post(
+                "/v1/console/releases/import", headers=headers, json={}
+            ).status_code
+            == 403
+        )
 
 
 def test_console_rejects_a_missing_client_address() -> None:
@@ -114,6 +141,62 @@ def test_console_rejects_a_missing_client_address() -> None:
     with pytest.raises(HTTPException) as error:
         require_console_lan(request)
     assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_status"),
+    [
+        ({"Host": "192.168.0.46:8081"}, 200),
+        (
+            {
+                "Host": "192.168.0.46:8081",
+                "Origin": "http://192.168.0.46:8081",
+            },
+            200,
+        ),
+        ({"Host": "attacker.example"}, 403),
+        ({"Host": "testserver"}, 403),
+        ({"Host": "localhost"}, 403),
+        (
+            {
+                "Host": "192.168.0.46:8081",
+                "Origin": "http://attacker.example",
+            },
+            403,
+        ),
+    ],
+)
+def test_console_rejects_dns_rebinding_origins(
+    tmp_path: Path, headers: dict[str, str], expected_status: int
+) -> None:
+    app = create_app(Settings(database_path=tmp_path / "origin.db", api_token=None))
+    with TestClient(app, client=("192.168.0.42", 50_000)) as client:
+        assert client.get("/console", headers=headers).status_code == expected_status
+
+
+def test_console_state_changes_require_an_exact_same_origin(tmp_path: Path) -> None:
+    app = create_app(Settings(database_path=tmp_path / "csrf.db", api_token=None))
+    with TestClient(app, client=("192.168.0.42", 50_000)) as client:
+        path = f"/v1/console/devices/{DEVICE}/commands"
+        body = {"command": {"action": "diagnostic_snapshot"}}
+        assert client.post(path, json=body).status_code == 403
+        assert (
+            client.post(
+                path,
+                json=body,
+                headers={"Origin": "http://attacker.example"},
+            ).status_code
+            == 403
+        )
+        accepted = client.post(
+            path,
+            json=body,
+            headers={
+                "Host": "192.168.0.46",
+                "Origin": "http://192.168.0.46",
+            },
+        )
+        assert accepted.status_code == 200, accepted.text
 
 
 def test_config_write_cannot_make_a_device_look_online(

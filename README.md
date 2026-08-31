@@ -13,6 +13,9 @@ later calibration.
 - `docs/`: architecture and hardware invariants.
 - `deploy/devb/`: explicit dual-address Uvicorn launchers and systemd files.
 
+The implemented v0.7 scope and remaining hardware acceptance gates are tracked
+in [`docs/v0.7-plan.md`](docs/v0.7-plan.md).
+
 The existing environmental sensor API stays on port 8080. The new presence API
 uses port 8081 so both services can be deployed and rolled back independently.
 
@@ -28,8 +31,15 @@ The same FastAPI service also serves a responsive operator console at
 presence/PIR/microphone timelines, calibration summaries, feedback markers,
 desired-versus-applied configuration state, and an explicitly confirmed
 configuration editor. The entire Console surface, including configuration
-writes, accepts only direct clients in `192.168.0.0/24`. The existing device
-API under `/v1/devices/...` remains bearer-authenticated.
+writes, accepts only direct clients in `192.168.0.0/24` using the configured
+literal LAN Host; mutations also require an exact same-origin browser request.
+The existing device API under `/v1/devices/...` remains bearer-authenticated.
+
+v0.7 also records bounded device-health history and explainable transition
+evidence, transports idempotent one-shot control commands, retains structured
+operational logs and sanitized crash summaries, and manages verified signed OTA
+releases. Production OTA is device-pulled through devb; the private signing key
+never leaves the developer machine.
 
 ```sh
 make backend-venv
@@ -39,7 +49,8 @@ make backend-run
 
 See `contracts/telemetry-v1.schema.json`, `contracts/api-v1.openapi.json`, and
 `docs/architecture.md` for the generated device/server contracts and runtime
-boundaries.
+boundaries. USB/OTA failure recovery is documented in
+[`docs/recovery.md`](docs/recovery.md).
 
 ## Firmware telemetry pipeline
 
@@ -120,6 +131,9 @@ GPIO25 is held low while the microphone is sampled.
 - Sound may bridge stationary periods for at most 5 minutes after the latest
   PIR evidence, so a television or fan cannot keep the display on forever.
 - Press B to wake the screen without adding a label.
+- Hold B for 1.5 seconds to open local diagnostics; short-press B exits.
+- In diagnostics, hold A+C for 3 seconds to open the authenticated 120-second
+  development-OTA window.
 - Press A or C to record a pre-button `PRESENT` or `ABSENT` correction.
 
 No audio is stored or transmitted. The microphone samples are reduced to a

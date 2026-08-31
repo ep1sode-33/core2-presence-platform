@@ -18,6 +18,7 @@ TelemetryBatchContext context() {
   result.batchId = "b-bootbootbootboot-0-1";
   result.bootId = "bootbootbootboot";
   result.firmwareVersion = "0.3.0";
+  result.buildId = "abc123";
   result.appliedConfigRevision = 2;
   result.hasClockAnchor = true;
   result.anchorUtcMs = 1700000000000ULL;
@@ -36,6 +37,15 @@ int main() {
   records[0].transition.hasFromState = false;
   records[0].transition.toState = PresenceState::kCalibrating;
   records[0].transition.reason = TransitionReason::kBoot;
+  records[0].transition.pir = false;
+  records[0].transition.pirAgeMs = 10;
+  records[0].transition.soundActive = false;
+  records[0].transition.soundAgeMs = 10;
+  records[0].transition.micEnvelope = 2.0f;
+  records[0].transition.noiseFloor = 3.0f;
+  records[0].transition.soundThreshold = 4.0f;
+  records[0].transition.brightnessBefore = 255;
+  records[0].transition.brightnessAfter = 255;
 
   records[1].kind = TelemetryKind::kSample;
   records[1].seq = 1;
@@ -59,11 +69,16 @@ int main() {
   assert(output ==
          "{\"schema_version\":1,\"batch_id\":\"b-bootbootbootboot-0-1\","
          "\"boot_id\":\"bootbootbootboot\",\"firmware_version\":\"0.3.0\","
+         "\"build_id\":\"abc123\","
          "\"applied_config_revision\":2,\"clock_anchor\":{\"utc_ms\":"
          "1700000000000,\"uptime_ms\":5000,\"source\":\"sntp\"},"
          "\"records\":[{\"seq\":0,\"kind\":\"transition\","
          "\"uptime_ms\":10,\"from_state\":null,\"to_state\":"
-         "\"calibrating\",\"reason\":\"boot\"},{\"seq\":1,\"kind\":"
+         "\"calibrating\",\"reason\":\"boot\",\"pir\":false,"
+         "\"pir_age_ms\":10,\"sound_active\":false,\"sound_age_ms\":10,"
+         "\"mic_envelope\":2.000,\"noise_floor\":3.000,"
+         "\"sound_threshold\":4.000,\"brightness_before\":255,"
+         "\"brightness_after\":255},{\"seq\":1,\"kind\":"
          "\"sample\",\"uptime_ms\":1000,\"pir\":true,\"mic_rms\":12.500,"
          "\"mic_envelope\":10.250,\"mic_min\":-20,\"mic_max\":30,"
          "\"noise_floor\":8.000,\"sound_threshold\":9.500,"
@@ -77,6 +92,12 @@ int main() {
   validContext.hasClockAnchor = false;
   assert(writeTelemetryBatchJson(validContext, records, 2, sink));
   assert(output.find("\"clock_anchor\":null") != std::string::npos);
+
+  output.clear();
+  validContext.buildId = nullptr;
+  assert(!writeTelemetryBatchJson(validContext, records, 2, sink));
+  assert(output.empty());
+  validContext.buildId = "abc123";
 
   output.clear();
   records[1].appliedConfigRevision = 3;

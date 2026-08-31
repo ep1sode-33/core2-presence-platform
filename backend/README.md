@@ -1,7 +1,8 @@
 # Presence API
 
 FastAPI + SQLite service for M5GO presence telemetry, state transitions,
-human feedback, and versioned device configuration.
+human feedback, versioned device configuration, health, remote control,
+signed OTA releases, operational logs, and crash diagnostics.
 
 ## Local development
 
@@ -44,10 +45,14 @@ write endpoint all reject clients outside `192.168.0.0/24` with HTTP 403. The
 server uses the direct socket peer address and ignores forwarding headers; no
 reverse proxy is part of this trust boundary. Consequently, every host on that
 LAN can read Console telemetry and issue a confirmed configuration revision.
-The ordinary `/v1/devices/...` endpoints remain bearer-protected.
+The Console also accepts only the configured literal `PRESENCE_CONSOLE_HOST`
+(default `192.168.0.46`) in the HTTP Host header, and state-changing browser
+requests need a matching same-origin Origin header. The ordinary
+`/v1/devices/...` endpoints remain bearer-protected.
 
-The console's online indicator means the server received telemetry within the
-last 120 seconds. Configuration reads or writes do not refresh that signal.
+The console's online indicator means the server received telemetry or a health
+snapshot within the last 120 seconds. Configuration reads or writes do not
+refresh that signal.
 Charts use reconstructed `observed_at_ms` when available and fall back to
 immutable server `received_at_ms` for unanchored data. Queries are capped at a
 24-hour window and downsampled to a bounded number of chart points.
@@ -56,3 +61,30 @@ Configuration changes show a field-by-field review dialog and require a second
 confirmation before issuing a revision. The API still enforces optimistic
 concurrency through `base_revision`; an intervening update returns HTTP 409 and
 the console reloads the current values.
+
+## v0.7 operations
+
+The device posts full health snapshots to `/v1/devices/{device_id}/health`,
+structured log batches to `/logs/batches`, and authenticated core dumps to
+`/coredumps`. It polls `/control` every five seconds, acknowledges a leased
+one-shot command at `/control/acks`, and reports OTA progress at
+`/control/release-status`. These routes inherit the device bearer-token
+requirement. Health history, commands, logs, release status, and dumps have
+per-device retention limits so the SQLite database remains bounded.
+
+Release import and selection are Console-only LAN operations. Configure the
+backend trust set with `PRESENCE_OTA_TRUST_KEYS_PATH`, pointing to a root-owned,
+mode-`0644` JSON object whose one or two entries map a signing key ID to a
+mode-`0644` P-256 public PEM file. Both contain public material; the service's
+systemd `DynamicUser` needs read access while only root may replace them. The
+bundle verifier accepts only the canonical archive and binary record
+produced by `tools/ota_release.py`; it never trusts key material supplied by the
+upload. A selected device downloads its bearer-protected manifest as the exact
+`manifest.bin` bytes followed by the 64-byte raw signature, and its image as raw
+`firmware.bin`; both responses use `application/octet-stream`.
+
+Set `PRESENCE_COREDUMP_DECODER` to the absolute `esp-coredump` executable when
+server-side symbolization is available. Verified OTA bundles retain their exact
+ELF by build ID. Raw dumps are retained only for authenticated backend
+processing: the tokenless Console can retrieve sanitized summaries, never dump
+bytes, ELF bytes, or unrestricted decoder output.

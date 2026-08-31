@@ -14,23 +14,37 @@ from fastapi import (
 from fastapi import (
     Path as ApiPath,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 
 from .config import Settings
 from .console import create_console_router
 from .database import Database
+from .operations import OperationsService
+from .ota_bundle import ReleaseBundleError
 from .schemas import (
     DEVICE_ID_PATTERN,
     MAX_SIGNED_64,
+    CommandAckResponse,
     ConfigPut,
     ConfigResponse,
+    ControlPollResponse,
+    CoreDumpIn,
+    CoreDumpIngestResponse,
+    DeviceCommandAck,
+    DeviceHealthPage,
+    DeviceHealthReport,
     FeedbackCreate,
     FeedbackPage,
     FeedbackResponse,
+    HealthIngestResponse,
     HealthResponse,
     IngestResponse,
+    OperationalLogBatchIn,
+    OperationalLogIngestResponse,
+    ReleaseStatusIn,
+    ReleaseStatusResponse,
     SampleOut,
     SamplePage,
     TelemetryBatch,
@@ -50,6 +64,10 @@ DeviceId = Annotated[
     str,
     ApiPath(min_length=1, max_length=64, pattern=DEVICE_ID_PATTERN),
 ]
+ReleaseId = Annotated[
+    str,
+    ApiPath(min_length=36, max_length=36, pattern=r"^rel-[0-9a-f]{32}$"),
+]
 BEARER_AUTH = HTTPBearer(auto_error=False, scheme_name="PresenceBearer")
 
 
@@ -57,6 +75,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or Settings.from_environment()
     database = Database(active_settings.database_path)
     service = PresenceService(database)
+    operations = OperationsService(
+        database,
+        active_settings.ota_trusted_keys,
+        active_settings.coredump_decoder,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -77,6 +100,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(NotFoundError)
     async def not_found_handler(_request, exc: NotFoundError):
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ReleaseBundleError)
+    async def release_bundle_handler(_request, exc: ReleaseBundleError):
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     def require_api_token(
         credentials: Annotated[
@@ -117,6 +144,98 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def ingest_batch(device_id: DeviceId, batch: TelemetryBatch) -> IngestResponse:
         return service.ingest(device_id, batch)
+
+    @router.post(
+        "/health",
+        response_model=HealthIngestResponse,
+        responses={409: {"description": "Health idempotency conflict"}},
+    )
+    def ingest_device_health(
+        device_id: DeviceId, report: DeviceHealthReport
+    ) -> HealthIngestResponse:
+        return operations.ingest_health(device_id, report)
+
+    @router.post(
+        "/logs/batches",
+        response_model=OperationalLogIngestResponse,
+        responses={409: {"description": "Log idempotency conflict"}},
+    )
+    def ingest_operational_logs(
+        device_id: DeviceId, batch: OperationalLogBatchIn
+    ) -> OperationalLogIngestResponse:
+        return operations.ingest_operational_logs(device_id, batch)
+
+    @router.post(
+        "/coredumps",
+        response_model=CoreDumpIngestResponse,
+        responses={409: {"description": "Core-dump integrity conflict"}},
+    )
+    def ingest_coredump(
+        device_id: DeviceId, report: CoreDumpIn
+    ) -> CoreDumpIngestResponse:
+        return operations.ingest_coredump(device_id, report)
+
+    @router.get("/health", response_model=DeviceHealthPage)
+    def device_health(
+        device_id: DeviceId,
+        limit: Annotated[int, Query(ge=1, le=1_440)] = 120,
+    ) -> DeviceHealthPage:
+        return operations.health_page(device_id, limit)
+
+    @router.get("/control", response_model=ControlPollResponse)
+    def poll_device_control(device_id: DeviceId) -> ControlPollResponse:
+        return operations.poll_control(device_id)
+
+    @router.post(
+        "/control/acks",
+        response_model=CommandAckResponse,
+        responses={
+            404: {"description": "Command does not exist for device"},
+            409: {"description": "Lease, idempotency, or status conflict"},
+        },
+    )
+    def acknowledge_device_command(
+        device_id: DeviceId, acknowledgement: DeviceCommandAck
+    ) -> CommandAckResponse:
+        return operations.acknowledge_command(device_id, acknowledgement)
+
+    @router.post(
+        "/control/release-status",
+        response_model=ReleaseStatusResponse,
+        responses={409: {"description": "Release status integrity conflict"}},
+    )
+    def report_release_status(
+        device_id: DeviceId, report: ReleaseStatusIn
+    ) -> ReleaseStatusResponse:
+        return operations.report_release_status(device_id, report)
+
+    @router.get(
+        "/releases/{release_id}/manifest",
+        response_class=Response,
+        responses={404: {"description": "Release is not selected for device"}},
+    )
+    def download_release_manifest(
+        device_id: DeviceId, release_id: ReleaseId
+    ) -> Response:
+        payload = operations.release_manifest_for_device(device_id, release_id)
+        return Response(
+            payload,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "private, immutable"},
+        )
+
+    @router.get(
+        "/releases/{release_id}/image",
+        response_class=Response,
+        responses={404: {"description": "Release is not selected for device"}},
+    )
+    def download_release_image(device_id: DeviceId, release_id: ReleaseId) -> Response:
+        payload = operations.release_image_for_device(device_id, release_id)
+        return Response(
+            payload,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "private, immutable"},
+        )
 
     @router.get(
         "/latest",
@@ -229,7 +348,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.put_config(device_id, update)
 
     app.include_router(router)
-    app.include_router(create_console_router(database, service))
+    app.include_router(
+        create_console_router(
+            database, service, operations, active_settings.console_host
+        )
+    )
     return app
 
 

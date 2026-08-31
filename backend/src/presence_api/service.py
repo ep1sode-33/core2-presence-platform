@@ -160,6 +160,42 @@ def canonical_hash(value: BaseModel | dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_V07_TRANSITION_FIELDS = (
+    "pir",
+    "pir_age_ms",
+    "sound_active",
+    "sound_age_ms",
+    "mic_envelope",
+    "noise_floor",
+    "sound_threshold",
+    "brightness_before",
+    "brightness_after",
+)
+
+
+def telemetry_hash(value: TelemetryBatch | SampleRecord | TransitionRecord) -> str:
+    """Hash telemetry without changing pre-v0.7 idempotency identities.
+
+    The v0.7 fields are optional only so an already stored v1 batch can still
+    be retried after the schema upgrade. Omitting absent additions recreates
+    the exact canonical JSON used by schema v3.
+    """
+    payload = value.model_dump(mode="json", exclude_none=False)
+    if isinstance(value, TelemetryBatch):
+        if value.build_id is None:
+            payload.pop("build_id", None)
+        for record in payload["records"]:
+            if record.get("kind") == "transition":
+                for field in _V07_TRANSITION_FIELDS:
+                    if record.get(field) is None:
+                        record.pop(field, None)
+    elif isinstance(value, TransitionRecord):
+        for field in _V07_TRANSITION_FIELDS:
+            if payload.get(field) is None:
+                payload.pop(field, None)
+    return canonical_hash(payload)
+
+
 class PresenceService:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -233,7 +269,7 @@ class PresenceService:
 
     def ingest(self, device_id: str, batch: TelemetryBatch) -> IngestResponse:
         received_at_ms = utc_now_ms()
-        batch_hash = canonical_hash(batch)
+        batch_hash = telemetry_hash(batch)
         max_seq = max(record.seq for record in batch.records)
 
         with self.database.session() as session:
@@ -317,7 +353,7 @@ class PresenceService:
                 stored = 0
                 duplicates = 0
                 for item in batch.records:
-                    record_hash = canonical_hash(item)
+                    record_hash = telemetry_hash(item)
                     key = (device_id, batch.boot_id, item.seq)
                     existing_record = session.get(TelemetryRecord, key)
                     if existing_record is not None:
@@ -353,6 +389,7 @@ class PresenceService:
                         received_at_ms=received_at_ms,
                         time_quality=time_quality,
                         applied_config_revision=batch.applied_config_revision,
+                        build_id=batch.build_id,
                         payload_hash=record_hash,
                     )
                     session.add(telemetry_record)
@@ -392,6 +429,15 @@ class PresenceService:
                                 ),
                                 to_state=item.to_state.value,
                                 reason=item.reason.value,
+                                pir=item.pir,
+                                pir_age_ms=item.pir_age_ms,
+                                sound_active=item.sound_active,
+                                sound_age_ms=item.sound_age_ms,
+                                mic_envelope=item.mic_envelope,
+                                noise_floor=item.noise_floor,
+                                sound_threshold=item.sound_threshold,
+                                brightness_before=item.brightness_before,
+                                brightness_after=item.brightness_after,
                             )
                         )
                     stored += 1
@@ -455,9 +501,19 @@ class PresenceService:
             received_at_ms=record.received_at_ms,
             time_quality=record.time_quality,
             applied_config_revision=record.applied_config_revision,
+            build_id=record.build_id,
             from_state=transition.from_state,
             to_state=transition.to_state,
             reason=transition.reason,
+            pir=transition.pir,
+            pir_age_ms=transition.pir_age_ms,
+            sound_active=transition.sound_active,
+            sound_age_ms=transition.sound_age_ms,
+            mic_envelope=transition.mic_envelope,
+            noise_floor=transition.noise_floor,
+            sound_threshold=transition.sound_threshold,
+            brightness_before=transition.brightness_before,
+            brightness_after=transition.brightness_after,
         )
 
     def latest_sample(self, device_id: str) -> SampleOut:

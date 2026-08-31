@@ -50,6 +50,8 @@ bool validContext(const TelemetryBatchContext& context) {
       context.firmwareVersion == nullptr ||
       context.firmwareVersion[0] == '\0' ||
       std::strlen(context.firmwareVersion) > 64 ||
+      context.buildId == nullptr || context.buildId[0] == '\0' ||
+      std::strlen(context.buildId) > 64 ||
       context.appliedConfigRevision > kMaxSigned64) {
     return false;
   }
@@ -94,7 +96,12 @@ bool validRecords(const TelemetryRecord* records, size_t recordCount,
         if ((record.transition.hasFromState &&
              !validState(record.transition.fromState)) ||
             !validState(record.transition.toState) ||
-            !validReason(record.transition.reason)) {
+            !validReason(record.transition.reason) ||
+            record.transition.pirAgeMs > kMaxSigned64 ||
+            record.transition.soundAgeMs > kMaxSigned64 ||
+            !validNonnegativeFloat(record.transition.micEnvelope) ||
+            !validNonnegativeFloat(record.transition.noiseFloor) ||
+            !validNonnegativeFloat(record.transition.soundThreshold)) {
           return false;
         }
         break;
@@ -230,7 +237,24 @@ bool writeRecord(Writer& writer, const TelemetryRecord& record) {
          writer.raw(",\"reason\":") &&
          writer.jsonString(
              transitionReasonWireName(record.transition.reason)) &&
-         writer.raw("}");
+         writer.raw(",\"pir\":") &&
+         writer.raw(record.transition.pir ? "true" : "false") &&
+         writer.format(",\"pir_age_ms\":%llu,\"sound_active\":%s,"
+                       "\"sound_age_ms\":%llu,\"mic_envelope\":%.3f,"
+                       "\"noise_floor\":%.3f,\"sound_threshold\":%.3f,"
+                       "\"brightness_before\":%u,\"brightness_after\":%u}",
+                       static_cast<unsigned long long>(
+                           record.transition.pirAgeMs),
+                       record.transition.soundActive ? "true" : "false",
+                       static_cast<unsigned long long>(
+                           record.transition.soundAgeMs),
+                       static_cast<double>(record.transition.micEnvelope),
+                       static_cast<double>(record.transition.noiseFloor),
+                       static_cast<double>(record.transition.soundThreshold),
+                       static_cast<unsigned>(
+                           record.transition.brightnessBefore),
+                       static_cast<unsigned>(
+                           record.transition.brightnessAfter));
 }
 
 }  // namespace
@@ -250,6 +274,7 @@ bool writeTelemetryBatchJson(const TelemetryBatchContext& context,
       !writer.jsonString(context.bootId) ||
       !writer.raw(",\"firmware_version\":") ||
       !writer.jsonString(context.firmwareVersion) ||
+      !writer.raw(",\"build_id\":") || !writer.jsonString(context.buildId) ||
       !writer.format(",\"applied_config_revision\":%llu,\"clock_anchor\":",
                      static_cast<unsigned long long>(
                          context.appliedConfigRevision))) {

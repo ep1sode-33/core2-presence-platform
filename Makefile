@@ -78,6 +78,115 @@ firmware-unit:
 		test/native/test_dashboard_time.cpp src/dashboard_time.cpp \
 		-o $(NATIVE_BUILD)/dashboard_time_test
 	$(NATIVE_BUILD)/dashboard_time_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_backlog_policy.cpp \
+		-o $(NATIVE_BUILD)/backlog_policy_test
+	$(NATIVE_BUILD)/backlog_policy_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_command_journal.cpp src/command_journal.cpp \
+		-o $(NATIVE_BUILD)/command_journal_test
+	$(NATIVE_BUILD)/command_journal_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_command_ack_protocol.cpp \
+		src/command_ack_protocol.cpp src/command_journal.cpp \
+		-o $(NATIVE_BUILD)/command_ack_protocol_test
+	$(NATIVE_BUILD)/command_ack_protocol_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -pthread -Isrc \
+		test/native/test_control_mailbox.cpp src/control_mailbox.cpp \
+		-o $(NATIVE_BUILD)/control_mailbox_test
+	$(NATIVE_BUILD)/control_mailbox_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_control_protocol.cpp src/control_protocol.cpp \
+		src/command_journal.cpp \
+		-o $(NATIVE_BUILD)/control_protocol_test
+	$(NATIVE_BUILD)/control_protocol_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_control_retry_policy.cpp src/control_retry_policy.cpp \
+		-o $(NATIVE_BUILD)/control_retry_policy_test
+	$(NATIVE_BUILD)/control_retry_policy_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -pthread -Isrc \
+		test/native/test_health_snapshot.cpp src/health_snapshot.cpp \
+		src/health_json.cpp \
+		-o $(NATIVE_BUILD)/health_snapshot_test
+	$(NATIVE_BUILD)/health_snapshot_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_operational_log.cpp src/operational_log.cpp \
+		-o $(NATIVE_BUILD)/operational_log_test
+	$(NATIVE_BUILD)/operational_log_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_operational_log_json.cpp \
+		src/operational_log_json.cpp src/operational_log.cpp \
+		-o $(NATIVE_BUILD)/operational_log_json_test
+	$(NATIVE_BUILD)/operational_log_json_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_operational_log_ack.cpp src/operational_log_ack.cpp \
+		-o $(NATIVE_BUILD)/operational_log_ack_test
+	$(NATIVE_BUILD)/operational_log_ack_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_manifest.cpp src/ota_manifest.cpp src/ota_crypto.cpp \
+		-o $(NATIVE_BUILD)/ota_manifest_test
+	$(NATIVE_BUILD)/ota_manifest_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_release.cpp src/ota_release.cpp \
+		src/ota_manifest.cpp src/ota_crypto.cpp src/ota_update.cpp \
+		-o $(NATIVE_BUILD)/ota_release_test
+	$(NATIVE_BUILD)/ota_release_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_release_status_ack.cpp \
+		src/ota_release_status_ack.cpp \
+		-o $(NATIVE_BUILD)/ota_release_status_ack_test
+	$(NATIVE_BUILD)/ota_release_status_ack_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_release_status.cpp src/ota_release_status.cpp \
+		-o $(NATIVE_BUILD)/ota_release_status_test
+	$(NATIVE_BUILD)/ota_release_status_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_control_validation.cpp \
+		src/ota_control_validation.cpp \
+		-o $(NATIVE_BUILD)/ota_control_validation_test
+	$(NATIVE_BUILD)/ota_control_validation_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_runtime.cpp src/ota_boot_validation.cpp \
+		src/ota_dev_window.cpp src/ota_update.cpp src/ota_release.cpp \
+		src/ota_manifest.cpp src/ota_crypto.cpp \
+		-o $(NATIVE_BUILD)/ota_runtime_test
+	$(NATIVE_BUILD)/ota_runtime_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_install_state.cpp src/ota_install_state.cpp \
+		-o $(NATIVE_BUILD)/ota_install_state_test
+	$(NATIVE_BUILD)/ota_install_state_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_ota_boot_policy.cpp src/ota_boot_policy.cpp \
+		src/ota_install_state.cpp src/ota_boot_validation.cpp \
+		src/ota_update.cpp src/ota_release.cpp src/ota_manifest.cpp \
+		src/ota_crypto.cpp \
+		-o $(NATIVE_BUILD)/ota_boot_policy_test
+	$(NATIVE_BUILD)/ota_boot_policy_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -pthread -Isrc \
+		test/native/test_ota_runtime_mailbox.cpp src/ota_runtime_mailbox.cpp \
+		-o $(NATIVE_BUILD)/ota_runtime_mailbox_test
+	$(NATIVE_BUILD)/ota_runtime_mailbox_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_uploader_watchdog.cpp src/uploader_watchdog.cpp \
+		-o $(NATIVE_BUILD)/uploader_watchdog_test
+	$(NATIVE_BUILD)/uploader_watchdog_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_sensor_health.cpp src/sensor_health.cpp \
+		-o $(NATIVE_BUILD)/sensor_health_test
+	$(NATIVE_BUILD)/sensor_health_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_core_dump_upload.cpp src/core_dump_upload.cpp \
+		src/core_dump_json.cpp src/ota_crypto.cpp \
+		-o $(NATIVE_BUILD)/core_dump_upload_test
+	$(NATIVE_BUILD)/core_dump_upload_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_core_dump_ack.cpp src/core_dump_ack.cpp \
+		-o $(NATIVE_BUILD)/core_dump_ack_test
+	$(NATIVE_BUILD)/core_dump_ack_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_crash_context.cpp src/crash_context.cpp \
+		-o $(NATIVE_BUILD)/crash_context_test
+	$(NATIVE_BUILD)/crash_context_test
 
 tools-test:
 	$(PYTHON) -m unittest discover -s tools/tests -v

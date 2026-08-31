@@ -29,7 +29,7 @@ QueuePushResult TelemetryQueue::push(const TelemetryRecord& record) {
   lock();
   const bool isSample = record.kind == TelemetryKind::kSample;
   const size_t sampleLimit = kCapacity - kReservedTransitionSlots;
-  if (isSample && size_ >= sampleLimit) {
+  if (isSample && (criticalOnly_ || size_ >= sampleLimit)) {
     ++droppedSamples_;
     unlock();
     return QueuePushResult::kSampleDropped;
@@ -44,6 +44,19 @@ QueuePushResult TelemetryQueue::push(const TelemetryRecord& record) {
   ++size_;
   unlock();
   return QueuePushResult::kStored;
+}
+
+void TelemetryQueue::setCriticalOnly(bool enabled) {
+  lock();
+  criticalOnly_ = enabled;
+  unlock();
+}
+
+bool TelemetryQueue::criticalOnly() const {
+  lock();
+  const bool enabled = criticalOnly_;
+  unlock();
+  return enabled;
 }
 
 bool TelemetryQueue::peek(TelemetryRecord& output) const {
@@ -106,6 +119,19 @@ size_t TelemetryQueue::size() const {
   const size_t result = size_;
   unlock();
   return result;
+}
+
+bool TelemetryQueue::hasCritical() const {
+  lock();
+  for (size_t index = 0; index < size_; ++index) {
+    if (records_[(head_ + index) % kCapacity].kind !=
+        TelemetryKind::kSample) {
+      unlock();
+      return true;
+    }
+  }
+  unlock();
+  return false;
 }
 
 uint32_t TelemetryQueue::droppedSamples() const {

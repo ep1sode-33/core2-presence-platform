@@ -6,9 +6,10 @@ The project is one Git repository with three separately deployed parts:
 
 1. The M5GO firmware owns sensor sampling, presence decisions, display power,
    rendering, a bounded telemetry queue, and eventual offline spooling.
-2. The presence API on `devb` owns durable telemetry, feedback, and
-   configuration. Its same-origin Web Console is an operator view over those
-   APIs; it does not create a second backend or database.
+2. The presence API on `devb` owns durable telemetry, feedback, configuration,
+   health, control commands, signed releases, operational logs, and sanitized
+   crash diagnostics. Its same-origin Web Console is an operator view over
+   those APIs; it does not create a second backend or database.
 3. The existing environmental sensor API remains a separate service on `devb`
    while the presence API is introduced.
 
@@ -152,11 +153,12 @@ uses `COALESCE(observed_at_ms, received_at_ms)`. The equivalent window predicate
 and latest-event ordering use a matching composite SQLite expression index.
 Transition and feedback markers use the same event-time rule as chart buckets.
 
-Device health is server-observed. A device is online only when its newest
-telemetry record was received within 120 seconds; `devices.last_seen_at_ms` is
-not used because configuration operations also update that administrative
-field. Calibration aggregates and feedback totals cover the complete selected
-window even when the visible marker list is capped.
+Connectivity is server-observed. A device is online only when its newest
+telemetry record or health report was received within 120 seconds;
+`devices.last_seen_at_ms` is not used because configuration operations also
+update that administrative field. The separately reported local health level
+cannot claim backend connectivity. Calibration aggregates and feedback totals
+cover the complete selected window even when the visible marker list is capped.
 
 ## Device identity
 
@@ -174,10 +176,10 @@ cosmetic rename would create a different logical device and split history.
 
 - Raw microphone audio never leaves the device and is never stored.
 - NVS is reserved for low-frequency settings such as Wi-Fi credentials, API
-  token, and the latest applied configuration revision. Provisioning writes an
-  inactive settings slot completely before atomically switching the active-slot
-  marker, preserving the previous valid configuration across interrupted
-  updates.
+  token, per-device development-OTA secret, release counter, and the latest
+  applied configuration revision. Provisioning writes an inactive settings
+  slot completely before atomically switching the active-slot marker,
+  preserving the previous valid configuration across interrupted updates.
 - SQLite on `devb` is the authoritative history.
 - A daily systemd timer creates consistent SQLite online-backup snapshots,
   validates them before atomic publication, and rotates daily and weekly
@@ -191,15 +193,39 @@ cosmetic rename would create a different logical device and split history.
 
 ## Database migration and recovery
 
-Database schema v3 adds nullable `applied_config_revision` to every telemetry
-record. New records always store the batch revision. Existing schema-v2 records
-migrate to `NULL`: the device-level applied revision is only a maximum and
-cannot reconstruct which historical record used which settings.
+Database schema v3 added nullable `applied_config_revision` to every telemetry
+record. New records store the batch revision; existing schema-v2 rows migrate
+to `NULL` because their historical value cannot be reconstructed.
 
-Deployment takes and validates an online backup before the v2-to-v3 service
-restart. Rolling the code back across this schema boundary also requires
-restoring that pre-migration backup because older application versions reject a
-newer `PRAGMA user_version`.
+v0.7 migrates additively through schema v4 to schema v5. Schema v4 adds health,
+control, release, operational-log, and core-dump storage plus transition
+evidence. Schema v5 persists each device's monotonic confirmed-release floor
+and the immutable completion outcome of every release-status report. SQLite
+uses WAL with `synchronous=FULL`, so a successful core-dump response is not sent
+until the transaction whose durability lets the device erase its copy has
+committed.
+
+Deployment takes and validates an online `pre-schema-v5` backup before the
+service restart. Rolling code back across this boundary also restores that
+snapshot because older application versions reject a newer
+`PRAGMA user_version`.
+
+## OTA and control flow
+
+The device initiates every connection. It polls the bearer-authenticated
+control endpoint for desired state and at most one leased command; devb never
+opens a connection to the M5GO. Command acceptance is persisted before a side
+effect, retries reuse the same acknowledgement identity, and nonterminal
+commands are never removed by history retention.
+
+Production OTA streams only the inactive application slot. Before writing, the
+firmware validates the fixed hardware identifier, monotonic counter, canonical
+manifest, and ECDSA P-256 signature against its compiled current/next public
+keys. It verifies the final byte count and SHA-256, then leaves the image in
+pending-verification state until 30 seconds of healthy local runtime. Wi-Fi or
+devb loss is a soft condition; failed local boot gates request bootloader
+rollback. Development OTA is separately protected by a per-device secret and
+exists only in a physically opened 120-second LAN window.
 
 ## Hardware invariants
 
@@ -220,11 +246,13 @@ The first deployed device transport is plain HTTP to the explicitly bound
 bearer token, but HTTP does not encrypt credentials or telemetry. The Web
 Console deliberately uses a different boundary: its shell, data reads, and
 confirmed configuration writes require the direct socket peer to be in
-`192.168.0.0/24` and never trust forwarding headers. Every host on that LAN is
-therefore a Console administrator. The service must not be exposed to an
-untrusted LAN or public interface. HTTPS is not accepted by provisioning until
-the firmware has a real certificate trust configuration; it never falls back
-to an insecure TLS client.
+`192.168.0.0/24`, never trusts forwarding headers, and accepts only the
+configured literal LAN Host. Browser mutations additionally require an exact
+same-origin Origin header, closing the DNS-rebinding path. Every host on that
+LAN is therefore a Console administrator. The service must not be exposed to
+an untrusted LAN or public interface. HTTPS is not accepted by provisioning
+until the firmware has a real certificate trust configuration; it never falls
+back to an insecure TLS client.
 
 The two display feeds are credential-free GETs and never receive the presence
 Bearer token. The LAN environment feed and first Open-Meteo integration also

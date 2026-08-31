@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import base64
+import os
+import stat
+import tempfile
 import unittest
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
 from typing import Self
 from unittest import mock
 
 from tools import provision_core2 as provision
+
+TEST_OTA_SECRET = base64.urlsafe_b64encode(bytes(range(32))).decode("ascii").rstrip("=")
 
 
 @dataclass
@@ -85,6 +91,7 @@ class ProtocolEncodingTests(unittest.TestCase):
             "p@ss,word",
             "http://192.168.0.46:8081",
             "token/value+secret",
+            TEST_OTA_SECRET,
         )
         expected_values = [
             provision.b64url_nopad(value)
@@ -93,6 +100,7 @@ class ProtocolEncodingTests(unittest.TestCase):
                 "p@ss,word",
                 "http://192.168.0.46:8081",
                 "token/value+secret",
+                TEST_OTA_SECRET,
             )
         ]
         self.assertEqual(
@@ -106,24 +114,34 @@ class ProtocolEncodingTests(unittest.TestCase):
     def test_set_rejects_non_lowercase_challenge(self) -> None:
         with self.assertRaises(provision.ProvisioningError):
             provision.build_set_line(
-                "01ABCDEF", "ssid", "password", "http://h", "token"
+                "01ABCDEF", "ssid", "password", "http://h", "token", TEST_OTA_SECRET
             )
 
     def test_set_rejects_credentials_embedded_in_base_url(self) -> None:
         with self.assertRaises(provision.ProvisioningError):
             provision.build_set_line(
-                "01abcdef", "ssid", "password", "http://user:secret@host", "token"
+                "01abcdef",
+                "ssid",
+                "password",
+                "http://user:secret@host",
+                "token",
+                TEST_OTA_SECRET,
             )
 
     def test_set_rejects_malformed_base_url(self) -> None:
         with self.assertRaises(provision.ProvisioningError):
             provision.build_set_line(
-                "01abcdef", "ssid", "password", "http://[", "token"
+                "01abcdef", "ssid", "password", "http://[", "token", TEST_OTA_SECRET
             )
 
     def test_set_accepts_open_wifi_password(self) -> None:
         line = provision.build_set_line(
-            "01abcdef", "Open WiFi", "", "http://192.168.0.46:8081", "token"
+            "01abcdef",
+            "Open WiFi",
+            "",
+            "http://192.168.0.46:8081",
+            "token",
+            TEST_OTA_SECRET,
         )
         self.assertIn(",,", line)
 
@@ -133,11 +151,24 @@ class ProtocolEncodingTests(unittest.TestCase):
             "http://example.test/path?query=1",
             "http://example.test/path#fragment",
         ):
-            with self.subTest(url=url), self.assertRaises(
-                provision.ProvisioningError
+            with self.subTest(url=url), self.assertRaises(provision.ProvisioningError):
+                provision.build_set_line(
+                    "01abcdef", "ssid", "password", url, "token", TEST_OTA_SECRET
+                )
+
+    def test_set_rejects_malformed_ota_secret(self) -> None:
+        for value in ("", "too-short", "A" * 42, "A" * 44, "+" + "A" * 42):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(provision.ProvisioningError),
             ):
                 provision.build_set_line(
-                    "01abcdef", "ssid", "password", url, "token"
+                    "01abcdef",
+                    "ssid",
+                    "password",
+                    "http://192.168.0.46:8081",
+                    "token",
+                    value,
                 )
 
 
@@ -244,9 +275,7 @@ class PortAndInputTests(unittest.TestCase):
             provision.read_secrets_from_stdin(StringIO("password\n"))
 
     def test_secrets_stdin_accepts_open_wifi_password(self) -> None:
-        password, token = provision.read_secrets_from_stdin(
-            StringIO("\napi-token\n")
-        )
+        password, token = provision.read_secrets_from_stdin(StringIO("\napi-token\n"))
         self.assertEqual(password, "")
         self.assertEqual(token, "api-token")
 
@@ -258,6 +287,46 @@ class PortAndInputTests(unittest.TestCase):
         }
         self.assertNotIn("--password", option_strings)
         self.assertNotIn("--token", option_strings)
+        self.assertNotIn("--ota-secret", option_strings)
+        self.assertIn("--ota-secret-store", option_strings)
+        self.assertIn("--rotate-ota-secret", option_strings)
+
+    def test_ota_secret_store_creates_reuses_and_rotates_securely(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = Path(temporary_directory) / "secrets"
+            first = provision.load_or_create_ota_secret(
+                store,
+                "core2-aabbccddeeff",
+                random_bytes=lambda count: bytes([1]) * count,
+            )
+            reused = provision.load_or_create_ota_secret(
+                store,
+                "core2-aabbccddeeff",
+                random_bytes=lambda count: bytes([2]) * count,
+            )
+            rotated = provision.load_or_create_ota_secret(
+                store,
+                "core2-aabbccddeeff",
+                rotate=True,
+                random_bytes=lambda count: bytes([3]) * count,
+            )
+
+            secret_path = store / "core2-aabbccddeeff.secret"
+            self.assertEqual(first, reused)
+            self.assertNotEqual(first, rotated)
+            self.assertEqual(secret_path.read_text(encoding="ascii").strip(), rotated)
+            self.assertEqual(stat.S_IMODE(store.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(secret_path.stat().st_mode), 0o600)
+            self.assertEqual(len(rotated), 43)
+
+    def test_ota_secret_store_rejects_insecure_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = Path(temporary_directory)
+            secret_path = store / "core2-aabbccddeeff.secret"
+            secret_path.write_text(TEST_OTA_SECRET + "\n", encoding="ascii")
+            os.chmod(secret_path, 0o644)
+            with self.assertRaises(provision.ProvisioningError):
+                provision.load_or_create_ota_secret(store, "core2-aabbccddeeff")
 
 
 class TransactionTests(unittest.TestCase):
@@ -281,6 +350,7 @@ class TransactionTests(unittest.TestCase):
                 password="do-not-print-password",
                 base_url=provision.DEFAULT_BASE_URL,
                 token="do-not-print-token",
+                ota_secret_provider=lambda _device_id: TEST_OTA_SECRET,
                 stdout=output,
             )
 
@@ -293,12 +363,14 @@ class TransactionTests(unittest.TestCase):
             "do-not-print-password",
             provision.DEFAULT_BASE_URL,
             "do-not-print-token",
+            TEST_OTA_SECRET,
         )
         self.assertEqual(
             connection.writes[1], provision.encode_protocol_line(expected_set)
         )
         self.assertNotIn("do-not-print-password", output.getvalue())
         self.assertNotIn("do-not-print-token", output.getvalue())
+        self.assertNotIn(TEST_OTA_SECRET, output.getvalue())
 
     def test_provision_rejects_result_from_different_device(self) -> None:
         connection = FakeSerialConnection(
@@ -321,6 +393,7 @@ class TransactionTests(unittest.TestCase):
                 password="password",
                 base_url=provision.DEFAULT_BASE_URL,
                 token="token",
+                ota_secret_provider=lambda _device_id: TEST_OTA_SECRET,
                 stdout=StringIO(),
             )
 

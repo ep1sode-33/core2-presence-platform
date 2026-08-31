@@ -14,6 +14,7 @@ struct TelemetryBatchContext {
   const char* batchId = nullptr;
   const char* bootId = nullptr;
   const char* firmwareVersion = nullptr;
+  const char* buildId = nullptr;
   uint64_t appliedConfigRevision = 0;
   bool hasClockAnchor = false;
   uint64_t anchorUtcMs = 0;

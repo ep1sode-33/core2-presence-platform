@@ -4,6 +4,7 @@ from importlib.resources import files
 from ipaddress import ip_address, ip_network
 from math import ceil
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import Response
@@ -11,13 +12,31 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Integer, and_, case, cast, func, or_, select
 
 from .database import Database
-from .models import Device, Feedback, Sample, StateTransition, TelemetryRecord
+from .models import (
+    Device,
+    DeviceHealthReport,
+    Feedback,
+    Sample,
+    StateTransition,
+    TelemetryRecord,
+)
+from .operations import OperationsService
 from .schemas import (
     DEVICE_ID_PATTERN,
+    CommandOut,
     ConfigPut,
     ConfigResponse,
+    ConsoleCommandCreate,
+    DeviceHealthPage,
+    DeviceReleaseOverview,
+    DeviceReleaseSelection,
+    DeviceReleaseTargetOut,
+    OperationalLogPage,
     PresenceState,
+    ReleaseBundleImport,
+    ReleaseSummary,
     SampleOut,
+    SanitizedCoreDumpPage,
 )
 from .service import NotFoundError, PresenceService, utc_now_ms
 
@@ -56,6 +75,11 @@ class ConsoleDeviceSummary(ConsoleModel):
     online_threshold_ms: int
     last_seen_at_ms: int | None
     last_seen_age_ms: int | None
+    last_telemetry_at_ms: int | None
+    last_health_at_ms: int | None
+    reported_health_level: (
+        Literal["healthy", "degraded", "action_required", "unknown"] | None
+    )
     firmware_version: str | None
     desired_config_revision: int
     latest_reported_config_revision: int | None
@@ -121,9 +145,21 @@ class ConsoleTransition(ConsoleModel):
     marker_ms: int
     boot_id: str
     seq: int
+    uptime_ms: int
+    build_id: str | None
+    applied_config_revision: int | None
     from_state: PresenceState | None
     to_state: PresenceState
     reason: str
+    pir: bool | None
+    pir_age_ms: int | None
+    sound_active: bool | None
+    sound_age_ms: int | None
+    mic_envelope: float | None
+    noise_floor: float | None
+    sound_threshold: float | None
+    brightness_before: int | None
+    brightness_after: int | None
 
 
 class ConsoleFeedback(ConsoleModel):
@@ -167,12 +203,23 @@ def _device_summary(
     device: Device,
     latest_state: str | None,
     latest_telemetry_received_at_ms: int | None,
+    latest_health_received_at_ms: int | None,
+    latest_health_level: str | None,
     latest_reported_config_revision: int | None,
     now_ms: int,
 ) -> ConsoleDeviceSummary:
+    activity_values = [
+        value
+        for value in (
+            latest_telemetry_received_at_ms,
+            latest_health_received_at_ms,
+        )
+        if value is not None
+    ]
+    latest_activity_at_ms = max(activity_values) if activity_values else None
     age_ms = (
-        max(0, now_ms - latest_telemetry_received_at_ms)
-        if latest_telemetry_received_at_ms is not None
+        max(0, now_ms - latest_activity_at_ms)
+        if latest_activity_at_ms is not None
         else None
     )
     return ConsoleDeviceSummary(
@@ -180,8 +227,11 @@ def _device_summary(
         name=device.name,
         online=age_ms is not None and age_ms <= ONLINE_THRESHOLD_MS,
         online_threshold_ms=ONLINE_THRESHOLD_MS,
-        last_seen_at_ms=latest_telemetry_received_at_ms,
+        last_seen_at_ms=latest_activity_at_ms,
         last_seen_age_ms=age_ms,
+        last_telemetry_at_ms=latest_telemetry_received_at_ms,
+        last_health_at_ms=latest_health_received_at_ms,
+        reported_health_level=latest_health_level,
         firmware_version=device.firmware_version,
         desired_config_revision=device.desired_config_revision,
         latest_reported_config_revision=latest_reported_config_revision,
@@ -217,8 +267,54 @@ def _asset_response(name: str, media_type: str) -> Response:
     )
 
 
-def require_console_lan(request: Request) -> None:
-    """Keep the tokenless operator console on the trusted home LAN."""
+def _console_request_origin_is_allowed(request: Request, console_host: str) -> bool:
+    raw_headers = request.scope.get("headers", ())
+    host_headers = [value for name, value in raw_headers if name.lower() == b"host"]
+    if len(host_headers) != 1:
+        return False
+    try:
+        host_value = host_headers[0].decode("ascii")
+        parsed_host = urlsplit(f"//{host_value}")
+        host_name = parsed_host.hostname
+        host_port = parsed_host.port
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if (
+        host_name is None
+        or host_name.lower() != console_host.lower()
+        or parsed_host.username is not None
+        or parsed_host.password is not None
+        or parsed_host.path
+        or parsed_host.query
+        or parsed_host.fragment
+    ):
+        return False
+
+    origin_headers = [value for name, value in raw_headers if name.lower() == b"origin"]
+    if not origin_headers:
+        return request.method in {"GET", "HEAD", "OPTIONS"}
+    if len(origin_headers) != 1:
+        return False
+    try:
+        parsed_origin = urlsplit(origin_headers[0].decode("ascii"))
+        origin_port = parsed_origin.port
+    except (UnicodeDecodeError, ValueError):
+        return False
+    return (
+        parsed_origin.scheme == "http"
+        and parsed_origin.hostname is not None
+        and parsed_origin.hostname.lower() == host_name.lower()
+        and origin_port == host_port
+        and parsed_origin.username is None
+        and parsed_origin.password is None
+        and parsed_origin.path in ("", "/")
+        and not parsed_origin.query
+        and not parsed_origin.fragment
+    )
+
+
+def require_console_lan(request: Request, console_host: str = "192.168.0.46") -> None:
+    """Keep the tokenless operator console on its exact trusted LAN origin."""
     if request.client is None:
         raise HTTPException(status_code=403, detail="console is available only on LAN")
     try:
@@ -229,14 +325,24 @@ def require_console_lan(request: Request) -> None:
         ) from error
     if not any(client_address in network for network in _CONSOLE_ALLOWED_NETWORKS):
         raise HTTPException(status_code=403, detail="console is available only on LAN")
+    # The peer address above remains the authorization boundary. This
+    # additional Host/Origin gate prevents a browser on the LAN from being
+    # driven through a DNS-rebinding origin into the tokenless Console.
+    if not _console_request_origin_is_allowed(request, console_host):
+        raise HTTPException(status_code=403, detail="console origin is not allowed")
 
 
 def create_console_router(
     database: Database,
     service: PresenceService,
+    operations: OperationsService,
+    console_host: str = "192.168.0.46",
 ) -> APIRouter:
+    def require_configured_console_lan(request: Request) -> None:
+        require_console_lan(request, console_host)
+
     router = APIRouter(
-        dependencies=[Depends(require_console_lan)],
+        dependencies=[Depends(require_configured_console_lan)],
         responses={403: {"description": "Console is available only on the LAN"}},
     )
 
@@ -293,6 +399,24 @@ def create_console_router(
             .correlate(Device)
             .scalar_subquery()
         )
+        latest_health_received_at_ms = (
+            select(func.max(DeviceHealthReport.received_at_ms))
+            .where(DeviceHealthReport.device_id == Device.device_id)
+            .correlate(Device)
+            .scalar_subquery()
+        )
+        latest_health_level = (
+            select(DeviceHealthReport.local_level)
+            .where(DeviceHealthReport.device_id == Device.device_id)
+            .order_by(
+                DeviceHealthReport.received_at_ms.desc(),
+                DeviceHealthReport.boot_id.desc(),
+                DeviceHealthReport.sequence.desc(),
+            )
+            .limit(1)
+            .correlate(Device)
+            .scalar_subquery()
+        )
         with database.session() as session:
             rows = session.execute(
                 select(
@@ -301,10 +425,13 @@ def create_console_router(
                     latest_telemetry_received_at_ms.label(
                         "latest_telemetry_received_at_ms"
                     ),
+                    latest_health_received_at_ms.label("latest_health_received_at_ms"),
+                    latest_health_level.label("latest_health_level"),
                     latest_reported_config_revision.label(
                         "latest_reported_config_revision"
                     ),
                 ).order_by(
+                    latest_health_received_at_ms.desc(),
                     latest_telemetry_received_at_ms.desc(),
                     Device.device_id,
                 )
@@ -313,11 +440,20 @@ def create_console_router(
                 _device_summary(
                     device,
                     state,
-                    last_received_ms,
+                    last_telemetry_ms,
+                    last_health_ms,
+                    health_level,
                     latest_revision,
                     now_ms,
                 )
-                for device, state, last_received_ms, latest_revision in rows
+                for (
+                    device,
+                    state,
+                    last_telemetry_ms,
+                    last_health_ms,
+                    health_level,
+                    latest_revision,
+                ) in rows
             ]
         return ConsoleDeviceList(server_utc_ms=now_ms, items=items)
 
@@ -389,6 +525,16 @@ def create_console_router(
                     TelemetryRecord.device_id == device_id
                 )
             ).scalar_one()
+            latest_health = session.scalars(
+                select(DeviceHealthReport)
+                .where(DeviceHealthReport.device_id == device_id)
+                .order_by(
+                    DeviceHealthReport.received_at_ms.desc(),
+                    DeviceHealthReport.boot_id.desc(),
+                    DeviceHealthReport.sequence.desc(),
+                )
+                .limit(1)
+            ).first()
             latest_reported_config_revision = session.execute(
                 select(TelemetryRecord.applied_config_revision)
                 .where(TelemetryRecord.device_id == device_id)
@@ -573,9 +719,21 @@ def create_console_router(
                 marker_ms=event_ms,
                 boot_id=record.boot_id,
                 seq=record.seq,
+                uptime_ms=record.uptime_ms,
+                build_id=record.build_id,
+                applied_config_revision=record.applied_config_revision,
                 from_state=transition.from_state,
                 to_state=transition.to_state,
                 reason=transition.reason,
+                pir=transition.pir,
+                pir_age_ms=transition.pir_age_ms,
+                sound_active=transition.sound_active,
+                sound_age_ms=transition.sound_age_ms,
+                mic_envelope=transition.mic_envelope,
+                noise_floor=transition.noise_floor,
+                sound_threshold=transition.sound_threshold,
+                brightness_before=transition.brightness_before,
+                brightness_after=transition.brightness_after,
             )
             for record, transition, event_ms in visible_transitions
         ]
@@ -599,6 +757,8 @@ def create_console_router(
                 device,
                 latest_state,
                 latest_telemetry_received_at_ms,
+                latest_health.received_at_ms if latest_health is not None else None,
+                latest_health.local_level if latest_health is not None else None,
                 latest_reported_config_revision,
                 now_ms,
             ),
@@ -652,5 +812,103 @@ def create_console_router(
         device_id: ConsoleDeviceId, update: ConfigPut
     ) -> ConfigResponse:
         return service.put_config(device_id, update)
+
+    @router.get(
+        "/v1/console/devices/{device_id}/health",
+        response_model=DeviceHealthPage,
+    )
+    def console_device_health(
+        device_id: ConsoleDeviceId,
+        limit: Annotated[int, Query(ge=1, le=1_440)] = 120,
+    ) -> DeviceHealthPage:
+        return operations.health_page(device_id, limit)
+
+    @router.get(
+        "/v1/console/devices/{device_id}/commands",
+        response_model=list[CommandOut],
+    )
+    def console_commands(
+        device_id: ConsoleDeviceId,
+        limit: Annotated[int, Query(ge=1, le=256)] = 50,
+    ) -> list[CommandOut]:
+        return operations.list_commands(device_id, limit)
+
+    @router.post(
+        "/v1/console/devices/{device_id}/commands",
+        response_model=CommandOut,
+    )
+    def create_console_command(
+        device_id: ConsoleDeviceId, request: ConsoleCommandCreate
+    ) -> CommandOut:
+        return operations.create_command(device_id, request)
+
+    @router.get(
+        "/v1/console/devices/{device_id}/logs",
+        response_model=OperationalLogPage,
+    )
+    def console_operational_logs(
+        device_id: ConsoleDeviceId,
+        limit: Annotated[int, Query(ge=1, le=1_000)] = 200,
+        since_ms: Annotated[int | None, Query(ge=0)] = None,
+    ) -> OperationalLogPage:
+        return operations.list_operational_logs(device_id, limit, since_ms)
+
+    @router.get(
+        "/v1/console/devices/{device_id}/coredumps",
+        response_model=SanitizedCoreDumpPage,
+        description=(
+            "Sanitized symbolication summaries only. Raw core-dump bytes are "
+            "never exposed by a tokenless Console route."
+        ),
+    )
+    def console_coredumps(
+        device_id: ConsoleDeviceId,
+        limit: Annotated[int, Query(ge=1, le=10)] = 10,
+    ) -> SanitizedCoreDumpPage:
+        return operations.list_coredump_summaries(device_id, limit)
+
+    @router.get("/v1/console/releases", response_model=list[ReleaseSummary])
+    def console_releases() -> list[ReleaseSummary]:
+        return operations.list_releases()
+
+    @router.post(
+        "/v1/console/releases/import",
+        response_model=ReleaseSummary,
+        responses={
+            400: {"description": "Bundle or signature verification failed"},
+            409: {"description": "Release identity conflict"},
+        },
+    )
+    def import_console_release(request: ReleaseBundleImport) -> ReleaseSummary:
+        return operations.import_release(request)
+
+    @router.get(
+        "/v1/console/devices/{device_id}/release",
+        response_model=DeviceReleaseTargetOut | None,
+    )
+    def console_release_target(
+        device_id: ConsoleDeviceId,
+    ) -> DeviceReleaseTargetOut | None:
+        return operations.get_release_target(device_id)
+
+    @router.get(
+        "/v1/console/devices/{device_id}/release-status",
+        response_model=DeviceReleaseOverview,
+    )
+    def console_release_status(device_id: ConsoleDeviceId) -> DeviceReleaseOverview:
+        return operations.release_overview(device_id)
+
+    @router.put(
+        "/v1/console/devices/{device_id}/release",
+        response_model=DeviceReleaseTargetOut,
+        responses={
+            404: {"description": "Verified release was not found"},
+            409: {"description": "Wireless downgrade was rejected"},
+        },
+    )
+    def select_console_release(
+        device_id: ConsoleDeviceId, selection: DeviceReleaseSelection
+    ) -> DeviceReleaseTargetOut:
+        return operations.select_release(device_id, selection)
 
     return router

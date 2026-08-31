@@ -7,8 +7,11 @@ Wants=network-online.target
 Type=simple
 DynamicUser=yes
 StateDirectory=m5-presence
+StateDirectoryMode=0700
 WorkingDirectory=/opt/m5-presence
 Environment="PRESENCE_DB_PATH=/var/lib/m5-presence/presence.db"
+Environment="PRESENCE_CONSOLE_HOST=192.168.0.46"
+Environment="PRESENCE_OTA_TRUST_KEYS_PATH=/etc/m5-presence-ota-trust.json"
 Environment="PYTHONDONTWRITEBYTECODE=1"
 Environment="PRESENCE_REQUIRE_TOKEN=1"
 LoadCredential=api_token:/etc/m5-presence.token

@@ -39,6 +39,22 @@ bool validMetric(float value) {
          value <= kMaximumSensorMetric;
 }
 
+bool canonicalUnusedTransition(const TransitionTelemetry& transition) {
+  const TransitionTelemetry empty = {};
+  return transition.hasFromState == empty.hasFromState &&
+         transition.fromState == empty.fromState &&
+         transition.toState == empty.toState &&
+         transition.reason == empty.reason && transition.pir == empty.pir &&
+         transition.pirAgeMs == empty.pirAgeMs &&
+         transition.soundActive == empty.soundActive &&
+         transition.soundAgeMs == empty.soundAgeMs &&
+         transition.micEnvelope == empty.micEnvelope &&
+         transition.noiseFloor == empty.noiseFloor &&
+         transition.soundThreshold == empty.soundThreshold &&
+         transition.brightnessBefore == empty.brightnessBefore &&
+         transition.brightnessAfter == empty.brightnessAfter;
+}
+
 bool validPreTouchSample(const TelemetryRecord& sample) {
   return sample.kind == TelemetryKind::kSample &&
          sample.seq <= kMaxSigned64 && sample.uptimeMs <= kMaxSigned64 &&
@@ -48,45 +64,8 @@ bool validPreTouchSample(const TelemetryRecord& sample) {
          validMetric(sample.sample.noiseFloor) &&
          validMetric(sample.sample.soundThreshold) &&
          sample.sample.micMin <= sample.sample.micMax &&
-         validState(sample.sample.state);
-}
-
-bool sameTelemetryRecord(const TelemetryRecord& left,
-                         const TelemetryRecord& right) {
-  return left.kind == right.kind && left.seq == right.seq &&
-         left.uptimeMs == right.uptimeMs &&
-         left.appliedConfigRevision == right.appliedConfigRevision &&
-         left.sample.pir == right.sample.pir &&
-         left.sample.micRms == right.sample.micRms &&
-         left.sample.micEnvelope == right.sample.micEnvelope &&
-         left.sample.micMin == right.sample.micMin &&
-         left.sample.micMax == right.sample.micMax &&
-         left.sample.noiseFloor == right.sample.noiseFloor &&
-         left.sample.soundThreshold == right.sample.soundThreshold &&
-         left.sample.soundActive == right.sample.soundActive &&
-         left.sample.state == right.sample.state &&
-         left.sample.brightness == right.sample.brightness &&
-         left.transition.hasFromState == right.transition.hasFromState &&
-         left.transition.fromState == right.transition.fromState &&
-         left.transition.toState == right.transition.toState &&
-         left.transition.reason == right.transition.reason;
-}
-
-bool sameFeedbackRecord(const FeedbackRecord& left,
-                        const FeedbackRecord& right) {
-  return std::memcmp(left.feedbackId, right.feedbackId,
-                     sizeof(left.feedbackId)) == 0 &&
-         std::memcmp(left.bootId, right.bootId, sizeof(left.bootId)) == 0 &&
-         left.seq == right.seq &&
-         left.linkedSampleUptimeMs == right.linkedSampleUptimeMs &&
-         left.actualPresence == right.actualPresence &&
-         left.observedState == right.observedState;
-}
-
-bool sameEvidence(const TouchFeedbackEvidence& left,
-                  const TouchFeedbackEvidence& right) {
-  return sameTelemetryRecord(left.preTouchSample, right.preTouchSample) &&
-         sameFeedbackRecord(left.feedback, right.feedback);
+         validState(sample.sample.state) &&
+         canonicalUnusedTransition(sample.transition);
 }
 
 void incrementSaturated(uint32_t& value) {
@@ -96,6 +75,72 @@ void incrementSaturated(uint32_t& value) {
 }
 
 }  // namespace
+
+TouchFeedbackQueue::CompactSlot TouchFeedbackQueue::compact(
+    const TouchFeedbackEvidence& evidence) {
+  CompactSlot slot = {};
+  slot.seq = evidence.feedback.seq;
+  slot.uptimeMs = evidence.feedback.linkedSampleUptimeMs;
+  slot.appliedConfigRevision = evidence.preTouchSample.appliedConfigRevision;
+  slot.sample = evidence.preTouchSample.sample;
+  std::memcpy(slot.bootId, evidence.feedback.bootId, sizeof(slot.bootId));
+  slot.actualPresence = evidence.feedback.actualPresence;
+  return slot;
+}
+
+TouchFeedbackEvidence TouchFeedbackQueue::expand(const CompactSlot& slot) {
+  static constexpr char kLowerHex[] = "0123456789abcdef";
+  TouchFeedbackEvidence evidence = {};
+  evidence.preTouchSample.kind = TelemetryKind::kSample;
+  evidence.preTouchSample.seq = slot.seq;
+  evidence.preTouchSample.uptimeMs = slot.uptimeMs;
+  evidence.preTouchSample.appliedConfigRevision =
+      slot.appliedConfigRevision;
+  evidence.preTouchSample.sample = slot.sample;
+  evidence.feedback.feedbackId[0] = 'f';
+  evidence.feedback.feedbackId[1] = ':';
+  std::memcpy(evidence.feedback.feedbackId + 2, slot.bootId, 32);
+  evidence.feedback.feedbackId[34] = ':';
+  for (size_t index = 0; index < 16; ++index) {
+    const unsigned shift = static_cast<unsigned>((15 - index) * 4);
+    evidence.feedback.feedbackId[35 + index] =
+        kLowerHex[(slot.seq >> shift) & UINT64_C(0x0f)];
+  }
+  evidence.feedback.feedbackId[51] = '\0';
+  std::memcpy(evidence.feedback.bootId, slot.bootId,
+              sizeof(evidence.feedback.bootId));
+  evidence.feedback.seq = slot.seq;
+  evidence.feedback.linkedSampleUptimeMs = slot.uptimeMs;
+  evidence.feedback.actualPresence = slot.actualPresence;
+  evidence.feedback.observedState = slot.sample.state;
+  return evidence;
+}
+
+bool TouchFeedbackQueue::slotMatchesEvidence(
+    const CompactSlot& slot, const TouchFeedbackEvidence& evidence) {
+  const SampleTelemetry& expected = evidence.preTouchSample.sample;
+  return evidence.preTouchSample.kind == TelemetryKind::kSample &&
+         slot.seq == evidence.preTouchSample.seq &&
+         slot.uptimeMs == evidence.preTouchSample.uptimeMs &&
+         slot.appliedConfigRevision ==
+             evidence.preTouchSample.appliedConfigRevision &&
+         slot.sample.pir == expected.pir &&
+         slot.sample.micRms == expected.micRms &&
+         slot.sample.micEnvelope == expected.micEnvelope &&
+         slot.sample.micMin == expected.micMin &&
+         slot.sample.micMax == expected.micMax &&
+         slot.sample.noiseFloor == expected.noiseFloor &&
+         slot.sample.soundThreshold == expected.soundThreshold &&
+         slot.sample.soundActive == expected.soundActive &&
+         slot.sample.state == expected.state &&
+         slot.sample.brightness == expected.brightness &&
+         std::memcmp(slot.bootId, evidence.feedback.bootId,
+                     sizeof(slot.bootId)) == 0 &&
+         slot.seq == evidence.feedback.seq &&
+         slot.uptimeMs == evidence.feedback.linkedSampleUptimeMs &&
+         slot.actualPresence == evidence.feedback.actualPresence &&
+         slot.sample.state == evidence.feedback.observedState;
+}
 
 bool buildTouchFeedbackEvidence(const char* bootId,
                                 const TelemetryRecord& preTouchSample,
@@ -158,7 +203,7 @@ TouchFeedbackQueuePushResult TouchFeedbackQueue::push(
     unlock();
     return TouchFeedbackQueuePushResult::kFull;
   }
-  records_[(head_ + size_) % kCapacity] = evidence;
+  records_[(head_ + size_) % kCapacity] = compact(evidence);
   ++size_;
   unlock();
   return TouchFeedbackQueuePushResult::kStored;
@@ -173,7 +218,7 @@ size_t TouchFeedbackQueue::copyPrefix(TouchFeedbackEvidence* output,
   lock();
   const size_t copyCount = size_ < outputCapacity ? size_ : outputCapacity;
   for (size_t index = 0; index < copyCount; ++index) {
-    output[index] = records_[(head_ + index) % kCapacity];
+    output[index] = expand(records_[(head_ + index) % kCapacity]);
   }
   unlock();
   return copyCount;
@@ -196,8 +241,8 @@ bool TouchFeedbackQueue::commitPrefix(const TouchFeedbackEvidence* expected,
     return false;
   }
   for (size_t index = 0; index < count; ++index) {
-    if (!sameEvidence(records_[(head_ + index) % kCapacity],
-                      expected[index])) {
+    if (!slotMatchesEvidence(records_[(head_ + index) % kCapacity],
+                             expected[index])) {
       unlock();
       return false;
     }

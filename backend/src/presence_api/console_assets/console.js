@@ -24,6 +24,17 @@ const elements = {
   changeList: document.querySelector("#changeList"),
   confirm: document.querySelector("#confirmCheckbox"),
   apply: document.querySelector("#applyButton"),
+  releaseSelect: document.querySelector("#releaseSelect"),
+  reviewRelease: document.querySelector("#reviewReleaseButton"),
+  releaseBundle: document.querySelector("#releaseBundle"),
+  importRelease: document.querySelector("#importReleaseButton"),
+  releaseMessage: document.querySelector("#releaseMessage"),
+  releaseDialog: document.querySelector("#releaseDialog"),
+  releaseReviewText: document.querySelector("#releaseReviewText"),
+  releaseConfirm: document.querySelector("#releaseConfirmCheckbox"),
+  applyRelease: document.querySelector("#applyReleaseButton"),
+  commandAction: document.querySelector("#commandAction"),
+  issueCommand: document.querySelector("#issueCommandButton"),
 };
 
 const view = {
@@ -48,6 +59,28 @@ const view = {
   feedbackCount: document.querySelector("#feedbackCount"),
   feedbackBody: document.querySelector("#feedbackBody"),
   configRevision: document.querySelector("#configRevision"),
+  healthLevel: document.querySelector("#healthLevel"),
+  healthConnectivity: document.querySelector("#healthConnectivity"),
+  healthWifi: document.querySelector("#healthWifi"),
+  healthBuild: document.querySelector("#healthBuild"),
+  healthTasks: document.querySelector("#healthTasks"),
+  healthQueues: document.querySelector("#healthQueues"),
+  healthStorage: document.querySelector("#healthStorage"),
+  healthMemory: document.querySelector("#healthMemory"),
+  healthSensors: document.querySelector("#healthSensors"),
+  releasePhase: document.querySelector("#releasePhase"),
+  releaseDesired: document.querySelector("#releaseDesired"),
+  releaseRunning: document.querySelector("#releaseRunning"),
+  releasePrevious: document.querySelector("#releasePrevious"),
+  releaseGood: document.querySelector("#releaseGood"),
+  releaseProgress: document.querySelector("#releaseProgress"),
+  releaseError: document.querySelector("#releaseError"),
+  transitionBody: document.querySelector("#transitionBody"),
+  logCount: document.querySelector("#logCount"),
+  logBody: document.querySelector("#logBody"),
+  crashCount: document.querySelector("#crashCount"),
+  crashBody: document.querySelector("#crashBody"),
+  commandBody: document.querySelector("#commandBody"),
 };
 
 let snapshot = null;
@@ -56,6 +89,8 @@ let refreshTimer = null;
 let snapshotController = null;
 let configDirty = false;
 let configEditBase = null;
+let operationsData = null;
+let pendingRelease = null;
 
 function setMessage(text, tone = "neutral") {
   elements.message.textContent = text;
@@ -177,11 +212,29 @@ async function loadSnapshot({ quiet = false } = {}) {
   try {
     const deviceId = encodeURIComponent(elements.device.value);
     const hours = encodeURIComponent(elements.hours.value);
-    snapshot = await apiFetch(
+    const paths = [
       `/v1/console/devices/${deviceId}/snapshot?hours=${hours}&max_points=720`,
-      { signal: controller.signal },
+      `/v1/console/devices/${deviceId}/health?limit=120`,
+      `/v1/console/devices/${deviceId}/release-status`,
+      `/v1/console/devices/${deviceId}/logs?limit=200`,
+      `/v1/console/devices/${deviceId}/coredumps?limit=10`,
+      "/v1/console/releases",
+      `/v1/console/devices/${deviceId}/commands?limit=50`,
+    ];
+    const results = await Promise.all(
+      paths.map((path) => apiFetch(path, { signal: controller.signal })),
     );
+    [snapshot] = results;
+    operationsData = {
+      health: results[1],
+      release: results[2],
+      logs: results[3],
+      crashes: results[4],
+      releases: results[5],
+      commands: results[6],
+    };
     renderSnapshot(snapshot);
+    renderOperations(operationsData);
     setMessage(`Updated ${formatEastern(snapshot.server_utc_ms, true)} Eastern`, "success");
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -227,6 +280,7 @@ function renderSnapshot(data) {
     : `Revision ${data.config.revision}`;
   if (!configDirty) fillConfig(data.config, device.device_id);
   renderFeedback(data.feedback);
+  renderTransitions(data.transitions);
   drawTimeline();
   const bucket = Math.round(timeWindow.bucket_ms / 1000);
   elements.caption.textContent = timeWindow.sample_count
@@ -332,6 +386,117 @@ async function applyConfig() {
   }
 }
 
+function setReleaseMessage(text, tone = "neutral") {
+  elements.releaseMessage.textContent = text;
+  elements.releaseMessage.dataset.tone = tone;
+}
+
+async function fileToBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const chunks = [];
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)));
+  }
+  return window.btoa(chunks.join(""));
+}
+
+async function importReleaseBundle() {
+  const [file] = elements.releaseBundle.files;
+  if (!file) {
+    setReleaseMessage("Choose the canonical .ota.zip bundle first.", "error");
+    return;
+  }
+  elements.importRelease.disabled = true;
+  setReleaseMessage(`Reading and verifying ${file.name}…`);
+  try {
+    const imported = await apiFetch("/v1/console/releases/import", {
+      method: "POST",
+      headers: requestHeaders(true),
+      body: JSON.stringify({
+        bundle_base64: await fileToBase64(file),
+        imported_by: "presence-console",
+      }),
+    });
+    elements.releaseBundle.value = "";
+    await loadSnapshot({ quiet: true });
+    elements.releaseSelect.value = imported.release_id;
+    elements.reviewRelease.disabled = false;
+    setReleaseMessage(`Verified ${imported.firmware_version} counter ${imported.release_counter}.`, "success");
+  } catch (error) {
+    setReleaseMessage(error.message, "error");
+  } finally {
+    elements.importRelease.disabled = false;
+  }
+}
+
+function reviewRelease() {
+  if (!operationsData || !elements.releaseSelect.value) return;
+  const release = operationsData.releases.find(
+    (item) => item.release_id === elements.releaseSelect.value,
+  );
+  if (!release) return;
+  pendingRelease = release;
+  elements.releaseReviewText.textContent = `${snapshot.device.device_id} will request ${release.firmware_version}, release counter ${release.release_counter}, build ${release.build_id}, for ${release.hardware_model}. SHA-256 ${release.image_sha256}.`;
+  elements.releaseConfirm.checked = false;
+  elements.applyRelease.disabled = true;
+  stopRefreshTimer();
+  elements.releaseDialog.showModal();
+}
+
+async function applyRelease() {
+  if (!pendingRelease || !elements.releaseConfirm.checked || !snapshot) return;
+  elements.applyRelease.disabled = true;
+  try {
+    const deviceId = encodeURIComponent(snapshot.device.device_id);
+    await apiFetch(`/v1/console/devices/${deviceId}/release`, {
+      method: "PUT",
+      headers: requestHeaders(true),
+      body: JSON.stringify({
+        release_id: pendingRelease.release_id,
+        selected_by: "presence-console",
+      }),
+    });
+    elements.releaseDialog.close();
+    await loadSnapshot({ quiet: true });
+    setReleaseMessage("Desired release selected; the device will fetch it on its next authenticated poll.", "success");
+  } catch (error) {
+    elements.releaseDialog.close();
+    setReleaseMessage(error.message, "error");
+  }
+}
+
+async function issueCommand() {
+  if (!snapshot) return;
+  const action = elements.commandAction.value;
+  if (!window.confirm(`Issue one-shot command “${action}” to ${snapshot.device.device_id}?`)) return;
+  const command = { action };
+  if (action === "set_log_level") {
+    command.level = "debug_sensor";
+    command.duration_seconds = 600;
+  } else if (action === "open_dev_ota") {
+    command.requires_local_confirmation = true;
+  }
+  elements.issueCommand.disabled = true;
+  try {
+    const deviceId = encodeURIComponent(snapshot.device.device_id);
+    await apiFetch(`/v1/console/devices/${deviceId}/commands`, {
+      method: "POST",
+      headers: requestHeaders(true),
+      body: JSON.stringify({
+        command,
+        expires_in_seconds: 600,
+        created_by: "presence-console",
+      }),
+    });
+    await loadSnapshot({ quiet: true });
+    setMessage(`Command ${action} queued.`, "success");
+  } catch (error) {
+    setMessage(error.message, "error");
+  } finally {
+    elements.issueCommand.disabled = false;
+  }
+}
+
 function renderFeedback(feedback) {
   view.feedbackBody.replaceChildren();
   if (!feedback.length) {
@@ -362,6 +527,149 @@ function renderFeedback(feedback) {
       row.append(cell);
     }
     view.feedbackBody.append(row);
+  }
+}
+
+function emptyTable(body, columns, message) {
+  body.replaceChildren();
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = columns;
+  cell.className = "empty-cell";
+  cell.textContent = message;
+  row.append(cell);
+  body.append(row);
+}
+
+function appendCells(body, values, attributes = {}) {
+  const row = document.createElement("tr");
+  for (const [name, value] of Object.entries(attributes)) row.dataset[name] = value;
+  for (const value of values) {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    row.append(cell);
+  }
+  body.append(row);
+}
+
+function renderTransitions(transitions) {
+  if (!transitions.length) {
+    emptyTable(view.transitionBody, 8, "No transitions in window");
+    return;
+  }
+  view.transitionBody.replaceChildren();
+  for (const item of [...transitions].reverse().slice(0, 200)) {
+    const pirAge = item.pir_age_ms == null ? "?" : `${item.pir_age_ms}ms ago`;
+    const soundAge = item.sound_age_ms == null ? "?" : `${item.sound_age_ms}ms ago`;
+    const mic = item.mic_envelope == null
+      ? "legacy record"
+      : `${formatNumber(item.mic_envelope)} / ${formatNumber(item.sound_threshold)} (noise ${formatNumber(item.noise_floor)})`;
+    appendCells(view.transitionBody, [
+      formatEastern(item.marker_ms, true),
+      `${item.from_state || "boot"} → ${item.to_state}`,
+      item.reason,
+      item.pir == null ? "legacy record" : `${item.pir ? "active" : "quiet"} · ${pirAge}`,
+      item.sound_active == null ? "legacy record" : `${item.sound_active ? "active" : "quiet"} · ${soundAge}`,
+      mic,
+      item.brightness_before == null ? "legacy record" : `${item.brightness_before} → ${item.brightness_after}`,
+      `${item.build_id || "unknown"} · config ${item.applied_config_revision ?? "?"}`,
+    ]);
+  }
+}
+
+function releaseLabel(releaseId, releases) {
+  if (!releaseId) return "—";
+  const release = releases.find((item) => item.release_id === releaseId);
+  return release ? `${release.firmware_version} · #${release.release_counter}` : releaseId;
+}
+
+function renderOperations(data) {
+  const health = data.health;
+  const latest = health.latest;
+  view.healthConnectivity.textContent = health.server_online
+    ? `online · activity ${formatAge(snapshot.device.last_seen_age_ms)}`
+    : "offline by server observation";
+  view.healthLevel.textContent = latest ? latest.level.toUpperCase() : "UNKNOWN";
+  view.healthLevel.dataset.level = latest ? latest.level : "unknown";
+  if (latest) {
+    view.healthWifi.textContent = latest.wifi.connected
+      ? `${latest.wifi.ip || "no IP"} · ${latest.wifi.rssi_dbm ?? "?"} dBm · ${latest.wifi.reconnect_count} reconnects`
+      : "disconnected";
+    view.healthBuild.textContent = `${latest.firmware_version} · ${latest.build_id} · ${latest.reset_reason}`;
+    view.healthTasks.textContent = `main ${latest.tasks.main_heartbeat_ms}ms · uploader ${latest.tasks.uploader_heartbeat_ms}ms`;
+    view.healthQueues.textContent = `telemetry ${latest.queues.telemetry_depth}/${latest.queues.telemetry_capacity} · feedback ${latest.queues.feedback_depth}/${latest.queues.feedback_capacity}`;
+    view.healthStorage.textContent = `${latest.storage.spool_files} spool · ${latest.storage.dead_files} dead · ${latest.storage.littlefs_free_bytes.toLocaleString()} B free`;
+    view.healthMemory.textContent = `${latest.memory.free_heap_bytes.toLocaleString()} B free · minimum ${latest.memory.min_free_heap_bytes.toLocaleString()} B`;
+    view.healthSensors.textContent = `PIR ${latest.sensors.pir_status} · mic ${latest.sensors.mic_status}${latest.sensors.pir_only_mode ? " · PIR-only" : ""}`;
+  } else {
+    for (const node of [view.healthWifi, view.healthBuild, view.healthTasks, view.healthQueues, view.healthStorage, view.healthMemory, view.healthSensors]) node.textContent = "No health report";
+  }
+
+  const releases = data.releases;
+  const previousSelection = elements.releaseSelect.value;
+  elements.releaseSelect.replaceChildren();
+  if (!releases.length) {
+    elements.releaseSelect.add(new Option("No releases imported", ""));
+    elements.reviewRelease.disabled = true;
+  } else {
+    elements.releaseSelect.add(new Option("Choose verified release…", ""));
+    for (const release of releases) {
+      elements.releaseSelect.add(new Option(
+        `${release.firmware_version} · counter ${release.release_counter} · ${release.build_id}`,
+        release.release_id,
+      ));
+    }
+    if (releases.some((release) => release.release_id === previousSelection)) {
+      elements.releaseSelect.value = previousSelection;
+    }
+    elements.reviewRelease.disabled = !elements.releaseSelect.value;
+  }
+  const target = data.release.target;
+  const status = data.release.latest_status;
+  view.releaseDesired.textContent = target ? releaseLabel(target.release.release_id, releases) : "—";
+  view.releaseRunning.textContent = releaseLabel(status?.running_release_id, releases);
+  view.releasePrevious.textContent = releaseLabel(status?.previous_release_id, releases);
+  view.releaseGood.textContent = releaseLabel(status?.last_known_good_release_id, releases);
+  view.releasePhase.textContent = status ? status.phase.toUpperCase() : "IDLE";
+  view.releaseProgress.textContent = status
+    ? `${status.progress_percent ?? "—"}% · rollback ${status.rollback_outcome}`
+    : "—";
+  view.releaseError.textContent = status?.last_error || "—";
+
+  view.logCount.textContent = `${data.logs.retained_records} retained`;
+  if (!data.logs.items.length) emptyTable(view.logBody, 4, "No operational events");
+  else {
+    view.logBody.replaceChildren();
+    for (const item of data.logs.items) appendCells(view.logBody, [
+      formatEastern(item.received_at_ms, true),
+      item.level,
+      item.event_type,
+      JSON.stringify(item.fields),
+    ], { level: item.level });
+  }
+
+  view.crashCount.textContent = `${data.crashes.retained_reports} retained`;
+  if (!data.crashes.items.length) emptyTable(view.crashBody, 4, "No crash reports");
+  else {
+    view.crashBody.replaceChildren();
+    for (const item of data.crashes.items) appendCells(view.crashBody, [
+      formatEastern(item.received_at_ms, true),
+      item.reset_reason,
+      item.build_id,
+      `${item.symbolication_status}: ${item.summary.join(" · ")}`,
+    ]);
+  }
+
+  if (!data.commands.length) emptyTable(view.commandBody, 5, "No commands");
+  else {
+    view.commandBody.replaceChildren();
+    for (const item of data.commands) appendCells(view.commandBody, [
+      formatEastern(item.created_at_ms, true),
+      item.command.action,
+      item.status,
+      String(item.delivery_attempts),
+      item.latest_result ? JSON.stringify(item.latest_result) : "—",
+    ], { status: item.status });
   }
 }
 
@@ -492,6 +800,20 @@ elements.dialog.addEventListener("close", () => {
   pendingConfig = null;
   if (elements.device.value) startRefreshTimer();
 });
+elements.releaseSelect.addEventListener("change", () => {
+  elements.reviewRelease.disabled = !elements.releaseSelect.value;
+});
+elements.reviewRelease.addEventListener("click", reviewRelease);
+elements.importRelease.addEventListener("click", importReleaseBundle);
+elements.releaseConfirm.addEventListener("change", () => {
+  elements.applyRelease.disabled = !elements.releaseConfirm.checked;
+});
+elements.applyRelease.addEventListener("click", applyRelease);
+elements.releaseDialog.addEventListener("close", () => {
+  pendingRelease = null;
+  if (elements.device.value) startRefreshTimer();
+});
+elements.issueCommand.addEventListener("click", issueCommand);
 window.addEventListener("resize", () => drawTimeline());
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {

@@ -35,11 +35,18 @@ enum class TouchFeedbackQueuePushResult : uint8_t {
   kInvalid,
 };
 
-// A small static queue: 16 evidence pairs consume a bounded amount of global
-// RAM, while a worker may copy only one front item onto its 12 KiB task stack.
+// A bounded static queue. The public evidence type intentionally carries a
+// complete TelemetryRecord, but a touch correction can only reference a sample;
+// keeping the unused transition payload and deterministic feedback strings in
+// every ring slot would waste scarce internal DRAM. The queue therefore stores
+// only the fields needed to reconstruct both public records exactly.
+//
+// One hundred twenty-eight pairs cover rapid physical input throughout the
+// bounded OTA watchdog envelope. The worker still copies only one reconstructed
+// front item onto its task stack.
 class TouchFeedbackQueue {
  public:
-  static constexpr size_t kCapacity = 16;
+  static constexpr size_t kCapacity = 128;
 
   TouchFeedbackQueuePushResult push(const TouchFeedbackEvidence& evidence);
 
@@ -58,13 +65,27 @@ class TouchFeedbackQueue {
   uint32_t rejectedInvalid() const;
 
  private:
+  struct CompactSlot {
+    uint64_t seq = 0;
+    uint64_t uptimeMs = 0;
+    uint64_t appliedConfigRevision = 0;
+    SampleTelemetry sample = {};
+    char bootId[33] = {};
+    ActualPresence actualPresence = ActualPresence::kPresent;
+  };
+
+  static CompactSlot compact(const TouchFeedbackEvidence& evidence);
+  static TouchFeedbackEvidence expand(const CompactSlot& slot);
+  static bool slotMatchesEvidence(const CompactSlot& slot,
+                                  const TouchFeedbackEvidence& evidence);
+
   void lock() const;
   void unlock() const;
 
 #ifdef ARDUINO_ARCH_ESP32
   mutable portMUX_TYPE mutex_ = portMUX_INITIALIZER_UNLOCKED;
 #endif
-  TouchFeedbackEvidence records_[kCapacity] = {};
+  CompactSlot records_[kCapacity] = {};
   size_t head_ = 0;
   size_t size_ = 0;
   uint32_t droppedFull_ = 0;

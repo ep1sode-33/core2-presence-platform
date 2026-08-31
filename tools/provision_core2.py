@@ -10,21 +10,28 @@ from __future__ import annotations
 import argparse
 import base64
 import getpass
+import os
 import re
+import secrets
+import stat
 import sys
+import tempfile
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TextIO
 from urllib.parse import urlsplit
 
 DEFAULT_PORT_FRAGMENT = "usbserial-588D0027491"
 DEFAULT_BASE_URL = "http://192.168.0.46:8081"
 DEFAULT_BAUD = 115200
+DEFAULT_OTA_SECRET_STORE = Path.home() / ".config" / "m5go-presence" / "ota-secrets"
 HELLO_LINE = "PROVISION,HELLO"
 
 _CHALLENGE_RE = re.compile(r"^[0-9a-f]{8}$")
 _SAFE_FIELD_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+_OTA_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 class ProvisioningError(Exception):
@@ -104,9 +111,7 @@ def parse_challenge_line(line: str) -> Challenge:
     )
 
 
-def _validate_input(
-    value: str, field_name: str, *, allow_empty: bool = False
-) -> None:
+def _validate_input(value: str, field_name: str, *, allow_empty: bool = False) -> None:
     if not value and not allow_empty:
         raise ProvisioningError(f"{field_name} must not be empty")
     if "\x00" in value or "\r" in value or "\n" in value:
@@ -137,6 +142,7 @@ def build_set_line(
     password: str,
     base_url: str,
     token: str,
+    ota_secret: str,
 ) -> str:
     """Build a PROVISION,SET line without ever interpolating raw secrets."""
 
@@ -146,14 +152,114 @@ def build_set_line(
     _validate_input(password, "Wi-Fi password", allow_empty=True)
     _validate_base_url(base_url)
     _validate_input(token, "API token")
+    if not _OTA_SECRET_RE.fullmatch(ota_secret):
+        raise ProvisioningError(
+            "OTA secret must encode exactly 32 random bytes as unpadded base64url"
+        )
 
     encoded_fields = (
         b64url_nopad(ssid),
         b64url_nopad(password),
         b64url_nopad(base_url),
         b64url_nopad(token),
+        b64url_nopad(ota_secret),
     )
     return "PROVISION,SET," + challenge + "," + ",".join(encoded_fields)
+
+
+def _read_stored_ota_secret(path: Path) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ProvisioningError(
+            "could not securely read the stored OTA secret"
+        ) from exc
+
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+            raise ProvisioningError(
+                "stored OTA secret must be a regular file with mode 0600"
+            )
+        raw = os.read(descriptor, 256)
+        if os.read(descriptor, 1):
+            raise ProvisioningError("stored OTA secret is unexpectedly large")
+    finally:
+        os.close(descriptor)
+
+    try:
+        value = raw.decode("ascii").rstrip("\r\n")
+    except UnicodeDecodeError:
+        raise ProvisioningError("stored OTA secret is not valid ASCII") from None
+    if not _OTA_SECRET_RE.fullmatch(value):
+        raise ProvisioningError("stored OTA secret has an invalid format")
+    return value
+
+
+def load_or_create_ota_secret(
+    store_dir: Path,
+    device_id: str,
+    *,
+    rotate: bool = False,
+    random_bytes: Callable[[int], bytes] = secrets.token_bytes,
+) -> str:
+    """Return a per-device OTA secret, persisting it before provisioning."""
+
+    _validate_safe_field(device_id, "device_id")
+    store_dir = Path(store_dir).expanduser()
+    try:
+        store_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if store_dir.is_symlink() or not store_dir.is_dir():
+            raise ProvisioningError("OTA secret store must be a directory, not a link")
+        os.chmod(store_dir, 0o700)
+    except OSError as exc:
+        raise ProvisioningError("could not create the OTA secret store") from exc
+
+    secret_path = store_dir / f"{device_id}.secret"
+    if secret_path.exists() and not rotate:
+        return _read_stored_ota_secret(secret_path)
+
+    entropy = random_bytes(32)
+    if len(entropy) != 32:
+        raise ProvisioningError("OTA random source returned the wrong byte count")
+    secret = base64.urlsafe_b64encode(entropy).decode("ascii").rstrip("=")
+    if not _OTA_SECRET_RE.fullmatch(secret):
+        raise AssertionError("32 random bytes must encode as 43 base64url characters")
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="ascii",
+            dir=store_dir,
+            prefix=f".{device_id}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            os.fchmod(temporary.fileno(), 0o600)
+            temporary.write(secret + "\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, secret_path)
+        temporary_path = None
+        os.chmod(secret_path, 0o600)
+        directory_descriptor = os.open(store_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    except OSError as exc:
+        raise ProvisioningError("could not securely persist the OTA secret") from exc
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    return secret
 
 
 def parse_result_line(line: str) -> ProvisionResult:
@@ -276,6 +382,17 @@ def create_argument_parser() -> argparse.ArgumentParser:
         default=DEFAULT_BAUD,
         help=f"serial baud rate (default: {DEFAULT_BAUD})",
     )
+    parser.add_argument(
+        "--ota-secret-store",
+        type=Path,
+        default=DEFAULT_OTA_SECRET_STORE,
+        help="directory for per-device development OTA secrets",
+    )
+    parser.add_argument(
+        "--rotate-ota-secret",
+        action="store_true",
+        help="replace this device's development OTA secret during provisioning",
+    )
     return parser
 
 
@@ -331,6 +448,7 @@ def provision(
     password: str,
     base_url: str,
     token: str,
+    ota_secret_provider: Callable[[str], str],
     stdout: TextIO,
 ) -> ProvisionResult:
     """Execute one HELLO/challenge/SET transaction."""
@@ -371,6 +489,7 @@ def provision(
                 password,
                 base_url,
                 token,
+                ota_secret_provider(challenge.device_id),
             )
             connection.write(encode_protocol_line(set_line))
             connection.flush()
@@ -427,6 +546,11 @@ def main(
             password=password,
             base_url=args.base_url,
             token=token,
+            ota_secret_provider=lambda device_id: load_or_create_ota_secret(
+                args.ota_secret_store,
+                device_id,
+                rotate=args.rotate_ota_secret,
+            ),
             stdout=stdout,
         )
         print(f"Provisioned {result.device_id}; restart required.", file=stdout)

@@ -22,6 +22,19 @@ enum class TransitionReason : uint8_t {
   kUnknown,
 };
 
+constexpr uint8_t presenceStateBrightness(PresenceState value) {
+  switch (value) {
+    case PresenceState::kCalibrating:
+    case PresenceState::kPresent:
+      return 255;
+    case PresenceState::kCooldown:
+      return 60;
+    case PresenceState::kIdle:
+      return 0;
+  }
+  return 0;
+}
+
 inline const char* presenceStateDisplayName(PresenceState value) {
   switch (value) {
     case PresenceState::kCalibrating:

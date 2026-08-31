@@ -26,6 +26,7 @@ enum class ProvisioningError : uint8_t {
   kInvalidSsid,
   kInvalidBaseUrl,
   kInvalidToken,
+  kInvalidOtaSecret,
   kInvalidSettings,
 };
 
@@ -48,9 +49,10 @@ Base64UrlError decodeBase64UrlNoPadding(const char* input,
 ProvisioningError normalizeAndValidateDeviceSettings(
     DeviceSettings* settings);
 
-// Strictly parses:
-// PROVISION,SET,<8 lowercase hex challenge>,<ssid>,<password>,<base_url>,<token>
-// The last four fields are unpadded base64url. output is unchanged on failure.
+// Strictly parses the v2 form:
+// PROVISION,SET,<challenge>,<ssid>,<password>,<base_url>,<token>,<ota_secret>
+// and accepts the legacy v1 form without ota_secret for recovery compatibility.
+// Encoded fields are unpadded base64url. output is unchanged on failure.
 ProvisioningError parseProvisioningSetCommand(
     const char* command, size_t commandLength, const char* expectedChallenge,
     size_t expectedChallengeLength, DeviceSettings* output);

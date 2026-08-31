@@ -8,11 +8,13 @@ struct DeviceSettings {
   static constexpr size_t kMaxPasswordBytes = 63;
   static constexpr size_t kMaxBaseUrlBytes = 128;
   static constexpr size_t kMaxTokenBytes = 256;
+  static constexpr size_t kOtaSecretBytes = 43;
 
   char ssid[kMaxSsidBytes + 1] = {};
   char password[kMaxPasswordBytes + 1] = {};
   char baseUrl[kMaxBaseUrlBytes + 1] = {};
   char token[kMaxTokenBytes + 1] = {};
+  char otaSecret[kOtaSecretBytes + 1] = {};
 };
 
 enum class DeviceSettingsStorageResult : uint8_t {

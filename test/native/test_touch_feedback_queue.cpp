@@ -40,6 +40,43 @@ TouchFeedbackEvidence evidenceFor(uint64_t seq) {
   return evidence;
 }
 
+bool sameEvidence(const TouchFeedbackEvidence& left,
+                  const TouchFeedbackEvidence& right) {
+  return left.preTouchSample.kind == right.preTouchSample.kind &&
+         left.preTouchSample.seq == right.preTouchSample.seq &&
+         left.preTouchSample.uptimeMs == right.preTouchSample.uptimeMs &&
+         left.preTouchSample.appliedConfigRevision ==
+             right.preTouchSample.appliedConfigRevision &&
+         left.preTouchSample.sample.pir == right.preTouchSample.sample.pir &&
+         left.preTouchSample.sample.micRms ==
+             right.preTouchSample.sample.micRms &&
+         left.preTouchSample.sample.micEnvelope ==
+             right.preTouchSample.sample.micEnvelope &&
+         left.preTouchSample.sample.micMin ==
+             right.preTouchSample.sample.micMin &&
+         left.preTouchSample.sample.micMax ==
+             right.preTouchSample.sample.micMax &&
+         left.preTouchSample.sample.noiseFloor ==
+             right.preTouchSample.sample.noiseFloor &&
+         left.preTouchSample.sample.soundThreshold ==
+             right.preTouchSample.sample.soundThreshold &&
+         left.preTouchSample.sample.soundActive ==
+             right.preTouchSample.sample.soundActive &&
+         left.preTouchSample.sample.state ==
+             right.preTouchSample.sample.state &&
+         left.preTouchSample.sample.brightness ==
+             right.preTouchSample.sample.brightness &&
+         std::memcmp(left.feedback.feedbackId, right.feedback.feedbackId,
+                     sizeof(left.feedback.feedbackId)) == 0 &&
+         std::memcmp(left.feedback.bootId, right.feedback.bootId,
+                     sizeof(left.feedback.bootId)) == 0 &&
+         left.feedback.seq == right.feedback.seq &&
+         left.feedback.linkedSampleUptimeMs ==
+             right.feedback.linkedSampleUptimeMs &&
+         left.feedback.actualPresence == right.feedback.actualPresence &&
+         left.feedback.observedState == right.feedback.observedState;
+}
+
 }  // namespace
 
 int main() {
@@ -47,6 +84,12 @@ int main() {
                 "evidence must remain standard-layout");
   static_assert(std::is_trivially_copyable<TouchFeedbackEvidence>::value,
                 "evidence must remain trivially copyable");
+  static_assert(sizeof(TouchFeedbackQueue) <
+                    sizeof(TouchFeedbackEvidence) *
+                        TouchFeedbackQueue::kCapacity,
+                "queue slots must stay smaller than public evidence");
+  static_assert(sizeof(TouchFeedbackQueue) < 16 * 1024,
+                "feedback queue must retain enough internal DRAM headroom");
 
   const TouchFeedbackEvidence valid = evidenceFor(42);
   assert(touchFeedbackEvidenceIsValid(valid));
@@ -74,6 +117,11 @@ int main() {
   assert(!buildTouchFeedbackEvidence(
       kBootId, sampleFor(43), static_cast<TouchPresenceChoice>(255),
       unchanged));
+  invalidSample = sampleFor(43);
+  invalidSample.transition.reason = TransitionReason::kBoot;
+  assert(!buildTouchFeedbackEvidence(
+      kBootId, invalidSample, TouchPresenceChoice::kPersonWasPresent,
+      unchanged));
 
   TouchFeedbackEvidence mismatched = valid;
   ++mismatched.feedback.seq;
@@ -86,7 +134,7 @@ int main() {
   assert(!touchFeedbackEvidenceIsValid(mismatched));
 
   TouchFeedbackQueue queue;
-  assert(queue.capacity() == 16);
+  assert(queue.capacity() == 128);
   assert(queue.size() == 0);
   assert(queue.copyPrefix(nullptr, 1) == 0);
   assert(queue.copyPrefix(&unchanged, 0) == 0);
@@ -98,14 +146,14 @@ int main() {
     assert(queue.push(evidence) == TouchFeedbackQueuePushResult::kStored);
   }
   assert(queue.size() == TouchFeedbackQueue::kCapacity);
-  assert(queue.push(evidenceFor(16)) == TouchFeedbackQueuePushResult::kFull);
+  assert(queue.push(evidenceFor(TouchFeedbackQueue::kCapacity)) ==
+         TouchFeedbackQueuePushResult::kFull);
   assert(queue.droppedFull() == 1);
 
   TouchFeedbackEvidence firstFive[5] = {};
   assert(queue.copyPrefix(firstFive, 5) == 5);
   for (size_t index = 0; index < 5; ++index) {
-    assert(firstFive[index].preTouchSample.seq == index);
-    assert(firstFive[index].feedback.seq == index);
+    assert(sameEvidence(firstFive[index], evidenceFor(index)));
   }
 
   TouchFeedbackEvidence mutatedPrefix[5] = {};
@@ -118,7 +166,8 @@ int main() {
 
   // These writes cross the physical end of the ring. FIFO copying must still
   // return each complete sample+feedback pair in order.
-  for (uint64_t seq = 16; seq < 21; ++seq) {
+  for (uint64_t seq = TouchFeedbackQueue::kCapacity;
+       seq < TouchFeedbackQueue::kCapacity + 5; ++seq) {
     assert(queue.push(evidenceFor(seq)) ==
            TouchFeedbackQueuePushResult::kStored);
   }
@@ -129,8 +178,7 @@ int main() {
          TouchFeedbackQueue::kCapacity);
   for (size_t index = 0; index < TouchFeedbackQueue::kCapacity; ++index) {
     const uint64_t expectedSeq = static_cast<uint64_t>(index + 5);
-    assert(wrapped[index].preTouchSample.seq == expectedSeq);
-    assert(wrapped[index].feedback.seq == expectedSeq);
+    assert(sameEvidence(wrapped[index], evidenceFor(expectedSeq)));
     assert(touchFeedbackEvidenceIsValid(wrapped[index]));
   }
   assert(queue.commitPrefix(wrapped, TouchFeedbackQueue::kCapacity));

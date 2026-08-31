@@ -30,6 +30,14 @@ std::string command(const std::string& ssid, const std::string& password,
          encode(password) + "," + encode(baseUrl) + "," + encode(token);
 }
 
+std::string commandV2(const std::string& ssid, const std::string& password,
+                      const std::string& baseUrl, const std::string& token,
+                      const std::string& otaSecret,
+                      const std::string& challenge = kChallenge) {
+  return command(ssid, password, baseUrl, token, challenge) + "," +
+         encode(otaSecret);
+}
+
 ProvisioningError parse(const std::string& value, DeviceSettings* settings) {
   return parseProvisioningSetCommand(value.data(), value.size(), kChallenge,
                                      sizeof(kChallenge) - 1, settings);
@@ -66,6 +74,25 @@ int main() {
     assert(std::strcmp(settings.password, "correct horse battery staple") == 0);
     assert(std::strcmp(settings.baseUrl, "http://192.168.0.46:8081") == 0);
     assert(std::strcmp(settings.token, "secret") == 0);
+    assert(settings.otaSecret[0] == '\0');
+  }
+
+  {
+    DeviceSettings settings;
+    const std::string otaSecret(DeviceSettings::kOtaSecretBytes, 'A');
+    const std::string value =
+        commandV2("Lab WiFi", "password", "http://192.168.0.46:8081",
+                  "secret", otaSecret);
+    assert(parse(value, &settings) == ProvisioningError::kOk);
+    assert(std::strcmp(settings.otaSecret, otaSecret.c_str()) == 0);
+    assert(parse(commandV2("Lab WiFi", "password",
+                                  "http://192.168.0.46:8081", "secret",
+                                  std::string(42, 'A')),
+                 &settings) == ProvisioningError::kInvalidOtaSecret);
+    assert(parse(commandV2("Lab WiFi", "password",
+                                  "http://192.168.0.46:8081", "secret",
+                                  std::string(43, '+')),
+                 &settings) == ProvisioningError::kInvalidOtaSecret);
   }
 
   {
@@ -170,7 +197,7 @@ int main() {
     DeviceSettings settings;
     const std::string value = command("ssid", "password",
                                       "http://192.168.0.46:8081", "token") +
-                              ",extra";
+                              ",extra,extra";
     assert(parse(value, &settings) == ProvisioningError::kInvalidFieldCount);
   }
 

@@ -33,6 +33,15 @@ struct TransitionTelemetry {
   PresenceState fromState = PresenceState::kCalibrating;
   PresenceState toState = PresenceState::kCalibrating;
   TransitionReason reason = TransitionReason::kUnknown;
+  bool pir = false;
+  uint64_t pirAgeMs = 0;
+  bool soundActive = false;
+  uint64_t soundAgeMs = 0;
+  float micEnvelope = 0.0f;
+  float noiseFloor = 0.0f;
+  float soundThreshold = 0.0f;
+  uint8_t brightnessBefore = 0;
+  uint8_t brightnessAfter = 0;
 };
 
 struct TelemetryRecord {
@@ -66,7 +75,14 @@ class TelemetryQueue {
   size_t copyPrefix(TelemetryRecord* output, size_t outputCapacity) const;
   bool commitPrefix(const TelemetryRecord* expected, size_t count);
 
+  // During a blocking OTA transfer, reject ordinary 1 Hz samples so the full
+  // fixed queue remains available for state transitions. The worker drains
+  // existing critical records before enabling this mode.
+  void setCriticalOnly(bool enabled);
+  bool criticalOnly() const;
+
   size_t size() const;
+  bool hasCritical() const;
   constexpr size_t capacity() const { return kCapacity; }
   uint32_t droppedSamples() const;
   uint32_t droppedCritical() const;
@@ -83,4 +99,5 @@ class TelemetryQueue {
   size_t size_ = 0;
   uint32_t droppedSamples_ = 0;
   uint32_t droppedCritical_ = 0;
+  bool criticalOnly_ = false;
 };

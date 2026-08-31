@@ -86,6 +86,550 @@
         }
       }
     },
+    "/v1/devices/{device_id}/health": {
+      "post": {
+        "summary": "Ingest Device Health",
+        "operationId": "ingest_device_health_v1_devices__device_id__health_post",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceHealthReport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthIngestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "409": {
+            "description": "Health idempotency conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Device Health",
+        "operationId": "device_health_v1_devices__device_id__health_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1440,
+              "minimum": 1,
+              "default": 120,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceHealthPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/logs/batches": {
+      "post": {
+        "summary": "Ingest Operational Logs",
+        "operationId": "ingest_operational_logs_v1_devices__device_id__logs_batches_post",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationalLogBatchIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalLogIngestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "409": {
+            "description": "Log idempotency conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/coredumps": {
+      "post": {
+        "summary": "Ingest Coredump",
+        "operationId": "ingest_coredump_v1_devices__device_id__coredumps_post",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoreDumpIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreDumpIngestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "409": {
+            "description": "Core-dump integrity conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/control": {
+      "get": {
+        "summary": "Poll Device Control",
+        "operationId": "poll_device_control_v1_devices__device_id__control_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControlPollResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/control/acks": {
+      "post": {
+        "summary": "Acknowledge Device Command",
+        "operationId": "acknowledge_device_command_v1_devices__device_id__control_acks_post",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCommandAck"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAckResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "description": "Command does not exist for device"
+          },
+          "409": {
+            "description": "Lease, idempotency, or status conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/control/release-status": {
+      "post": {
+        "summary": "Report Release Status",
+        "operationId": "report_release_status_v1_devices__device_id__control_release_status_post",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseStatusIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "409": {
+            "description": "Release status integrity conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/releases/{release_id}/manifest": {
+      "get": {
+        "summary": "Download Release Manifest",
+        "operationId": "download_release_manifest_v1_devices__device_id__releases__release_id__manifest_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 36,
+              "maxLength": 36,
+              "pattern": "^rel-[0-9a-f]{32}$",
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "description": "Release is not selected for device"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{device_id}/releases/{release_id}/image": {
+      "get": {
+        "summary": "Download Release Image",
+        "operationId": "download_release_image_v1_devices__device_id__releases__release_id__image_get",
+        "security": [
+          {
+            "PresenceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "release_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 36,
+              "maxLength": 36,
+              "pattern": "^rel-[0-9a-f]{32}$",
+              "title": "Release Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "description": "Release is not selected for device"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/devices/{device_id}/latest": {
       "get": {
         "summary": "Latest Sample",
@@ -790,6 +1334,538 @@
           }
         }
       }
+    },
+    "/v1/console/devices/{device_id}/health": {
+      "get": {
+        "summary": "Console Device Health",
+        "operationId": "console_device_health_v1_console_devices__device_id__health_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1440,
+              "minimum": 1,
+              "default": 120,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceHealthPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/console/devices/{device_id}/commands": {
+      "get": {
+        "summary": "Console Commands",
+        "operationId": "console_commands_v1_console_devices__device_id__commands_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 256,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CommandOut"
+                  },
+                  "title": "Response Console Commands V1 Console Devices  Device Id  Commands Get"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Console Command",
+        "operationId": "create_console_command_v1_console_devices__device_id__commands_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleCommandCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/console/devices/{device_id}/logs": {
+      "get": {
+        "summary": "Console Operational Logs",
+        "operationId": "console_operational_logs_v1_console_devices__device_id__logs_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "since_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since Ms"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalLogPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/console/devices/{device_id}/coredumps": {
+      "get": {
+        "summary": "Console Coredumps",
+        "description": "Sanitized symbolication summaries only. Raw core-dump bytes are never exposed by a tokenless Console route.",
+        "operationId": "console_coredumps_v1_console_devices__device_id__coredumps_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SanitizedCoreDumpPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/console/releases": {
+      "get": {
+        "summary": "Console Releases",
+        "operationId": "console_releases_v1_console_releases_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReleaseSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Console Releases V1 Console Releases Get"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          }
+        }
+      }
+    },
+    "/v1/console/releases/import": {
+      "post": {
+        "summary": "Import Console Release",
+        "operationId": "import_console_release_v1_console_releases_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseBundleImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "400": {
+            "description": "Bundle or signature verification failed"
+          },
+          "409": {
+            "description": "Release identity conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/console/devices/{device_id}/release": {
+      "get": {
+        "summary": "Console Release Target",
+        "operationId": "console_release_target_v1_console_devices__device_id__release_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DeviceReleaseTargetOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Console Release Target V1 Console Devices  Device Id  Release Get"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Select Console Release",
+        "operationId": "select_console_release_v1_console_devices__device_id__release_put",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceReleaseSelection"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceReleaseTargetOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "404": {
+            "description": "Verified release was not found"
+          },
+          "409": {
+            "description": "Wireless downgrade was rejected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/console/devices/{device_id}/release-status": {
+      "get": {
+        "summary": "Console Release Status",
+        "operationId": "console_release_status_v1_console_devices__device_id__release_status_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^core2-[0-9a-f]{12}$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceReleaseOverview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Console is available only on the LAN"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -836,6 +1912,174 @@
           "rtc"
         ],
         "title": "ClockSource"
+      },
+      "CommandAckResponse": {
+        "properties": {
+          "ack_id": {
+            "type": "string",
+            "title": "Ack Id"
+          },
+          "command_id": {
+            "type": "string",
+            "title": "Command Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CommandStatus"
+          },
+          "duplicate": {
+            "type": "boolean",
+            "title": "Duplicate"
+          },
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ack_id",
+          "command_id",
+          "status",
+          "duplicate",
+          "server_utc_ms"
+        ],
+        "title": "CommandAckResponse"
+      },
+      "CommandOut": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "title": "Command Id"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "title": "Created At Ms"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "title": "Expires At Ms"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CommandStatus"
+          },
+          "delivery_attempts": {
+            "type": "integer",
+            "title": "Delivery Attempts"
+          },
+          "latest_ack_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Ack At Ms"
+          },
+          "latest_result": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Result"
+          },
+          "command": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticSnapshotCommand"
+              },
+              {
+                "$ref": "#/components/schemas/SetLogLevelCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RecalibrateMicrophoneCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RetryUploadCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RebootCommand"
+              },
+              {
+                "$ref": "#/components/schemas/OpenDevOtaCommand"
+              }
+            ],
+            "title": "Command",
+            "discriminator": {
+              "propertyName": "action",
+              "mapping": {
+                "diagnostic_snapshot": "#/components/schemas/DiagnosticSnapshotCommand",
+                "open_dev_ota": "#/components/schemas/OpenDevOtaCommand",
+                "reboot": "#/components/schemas/RebootCommand",
+                "recalibrate_microphone": "#/components/schemas/RecalibrateMicrophoneCommand",
+                "retry_upload": "#/components/schemas/RetryUploadCommand",
+                "set_log_level": "#/components/schemas/SetLogLevelCommand"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "device_id",
+          "created_at_ms",
+          "expires_at_ms",
+          "created_by",
+          "status",
+          "delivery_attempts",
+          "latest_ack_at_ms",
+          "latest_result",
+          "command"
+        ],
+        "title": "CommandOut"
+      },
+      "CommandStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "leased",
+          "accepted",
+          "running",
+          "succeeded",
+          "failed",
+          "expired",
+          "rejected"
+        ],
+        "title": "CommandStatus"
       },
       "ConfigPut": {
         "properties": {
@@ -1028,6 +2272,64 @@
         ],
         "title": "ConsoleCalibration"
       },
+      "ConsoleCommandCreate": {
+        "properties": {
+          "command": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticSnapshotCommand"
+              },
+              {
+                "$ref": "#/components/schemas/SetLogLevelCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RecalibrateMicrophoneCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RetryUploadCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RebootCommand"
+              },
+              {
+                "$ref": "#/components/schemas/OpenDevOtaCommand"
+              }
+            ],
+            "title": "Command",
+            "discriminator": {
+              "propertyName": "action",
+              "mapping": {
+                "diagnostic_snapshot": "#/components/schemas/DiagnosticSnapshotCommand",
+                "open_dev_ota": "#/components/schemas/OpenDevOtaCommand",
+                "reboot": "#/components/schemas/RebootCommand",
+                "recalibrate_microphone": "#/components/schemas/RecalibrateMicrophoneCommand",
+                "retry_upload": "#/components/schemas/RetryUploadCommand",
+                "set_log_level": "#/components/schemas/SetLogLevelCommand"
+              }
+            }
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "maximum": 86400.0,
+            "minimum": 5.0,
+            "title": "Expires In Seconds",
+            "default": 300
+          },
+          "created_by": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Created By",
+            "default": "presence-console"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "ConsoleCommandCreate"
+      },
       "ConsoleDeviceList": {
         "properties": {
           "server_utc_ms": {
@@ -1097,6 +2399,45 @@
             ],
             "title": "Last Seen Age Ms"
           },
+          "last_telemetry_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Telemetry At Ms"
+          },
+          "last_health_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Health At Ms"
+          },
+          "reported_health_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "healthy",
+                  "degraded",
+                  "action_required",
+                  "unknown"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Health Level"
+          },
           "firmware_version": {
             "anyOf": [
               {
@@ -1158,6 +2499,9 @@
           "online_threshold_ms",
           "last_seen_at_ms",
           "last_seen_age_ms",
+          "last_telemetry_at_ms",
+          "last_health_at_ms",
+          "reported_health_level",
           "firmware_version",
           "desired_config_revision",
           "latest_reported_config_revision",
@@ -1414,6 +2758,32 @@
             "type": "integer",
             "title": "Seq"
           },
+          "uptime_ms": {
+            "type": "integer",
+            "title": "Uptime Ms"
+          },
+          "build_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Id"
+          },
+          "applied_config_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Config Revision"
+          },
           "from_state": {
             "anyOf": [
               {
@@ -1430,6 +2800,105 @@
           "reason": {
             "type": "string",
             "title": "Reason"
+          },
+          "pir": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir"
+          },
+          "pir_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir Age Ms"
+          },
+          "sound_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Active"
+          },
+          "sound_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Age Ms"
+          },
+          "mic_envelope": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mic Envelope"
+          },
+          "noise_floor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor"
+          },
+          "sound_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Threshold"
+          },
+          "brightness_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Before"
+          },
+          "brightness_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness After"
           }
         },
         "additionalProperties": false,
@@ -1438,9 +2907,21 @@
           "marker_ms",
           "boot_id",
           "seq",
+          "uptime_ms",
+          "build_id",
+          "applied_config_revision",
           "from_state",
           "to_state",
-          "reason"
+          "reason",
+          "pir",
+          "pir_age_ms",
+          "sound_active",
+          "sound_age_ms",
+          "mic_envelope",
+          "noise_floor",
+          "sound_threshold",
+          "brightness_before",
+          "brightness_after"
         ],
         "title": "ConsoleTransition"
       },
@@ -1513,6 +2994,744 @@
           "feedback_truncated"
         ],
         "title": "ConsoleWindow"
+      },
+      "ControlPollResponse": {
+        "properties": {
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "poll_after_ms": {
+            "type": "integer",
+            "const": 5000,
+            "title": "Poll After Ms",
+            "default": 5000
+          },
+          "desired_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DesiredRelease"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LeasedCommand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "server_utc_ms",
+          "desired_release",
+          "command"
+        ],
+        "title": "ControlPollResponse"
+      },
+      "CoreDumpIn": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "crash_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Crash Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Boot Id"
+          },
+          "build_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Build Id"
+          },
+          "reset_reason": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Reset Reason"
+          },
+          "dump_size": {
+            "type": "integer",
+            "maximum": 65536.0,
+            "minimum": 1.0,
+            "title": "Dump Size"
+          },
+          "dump_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Dump Sha256"
+          },
+          "dump_base64": {
+            "type": "string",
+            "maxLength": 90000,
+            "minLength": 1,
+            "title": "Dump Base64"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "crash_id",
+          "boot_id",
+          "build_id",
+          "reset_reason",
+          "dump_size",
+          "dump_sha256",
+          "dump_base64"
+        ],
+        "title": "CoreDumpIn"
+      },
+      "CoreDumpIngestResponse": {
+        "properties": {
+          "crash_id": {
+            "type": "string",
+            "title": "Crash Id"
+          },
+          "duplicate": {
+            "type": "boolean",
+            "title": "Duplicate"
+          },
+          "durable": {
+            "type": "boolean",
+            "title": "Durable"
+          },
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "symbolication_status": {
+            "type": "string",
+            "title": "Symbolication Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "crash_id",
+          "duplicate",
+          "durable",
+          "server_utc_ms",
+          "symbolication_status"
+        ],
+        "title": "CoreDumpIngestResponse"
+      },
+      "DesiredRelease": {
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "title": "Release Id"
+          },
+          "hardware_model": {
+            "type": "string",
+            "title": "Hardware Model"
+          },
+          "firmware_version": {
+            "type": "string",
+            "title": "Firmware Version"
+          },
+          "release_counter": {
+            "type": "integer",
+            "title": "Release Counter"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "image_size": {
+            "type": "integer",
+            "title": "Image Size"
+          },
+          "image_sha256": {
+            "type": "string",
+            "title": "Image Sha256"
+          },
+          "elf_sha256": {
+            "type": "string",
+            "title": "Elf Sha256"
+          },
+          "key_id": {
+            "type": "string",
+            "title": "Key Id"
+          },
+          "signature_format": {
+            "type": "string",
+            "const": "ecdsa-p256-sha256-raw",
+            "title": "Signature Format"
+          },
+          "imported_at_ms": {
+            "type": "integer",
+            "title": "Imported At Ms"
+          },
+          "imported_by": {
+            "type": "string",
+            "title": "Imported By"
+          },
+          "verified": {
+            "type": "boolean",
+            "title": "Verified"
+          },
+          "manifest_url": {
+            "type": "string",
+            "title": "Manifest Url"
+          },
+          "image_url": {
+            "type": "string",
+            "title": "Image Url"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "release_id",
+          "hardware_model",
+          "firmware_version",
+          "release_counter",
+          "build_id",
+          "image_size",
+          "image_sha256",
+          "elf_sha256",
+          "key_id",
+          "signature_format",
+          "imported_at_ms",
+          "imported_by",
+          "verified",
+          "manifest_url",
+          "image_url"
+        ],
+        "title": "DesiredRelease"
+      },
+      "DeviceCommandAck": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "ack_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Ack Id"
+          },
+          "command_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Command Id"
+          },
+          "lease_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Lease Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "running",
+              "succeeded",
+              "failed",
+              "expired",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object",
+                "maxProperties": 24
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "ack_id",
+          "command_id",
+          "lease_id",
+          "status"
+        ],
+        "title": "DeviceCommandAck"
+      },
+      "DeviceHealthLevel": {
+        "type": "string",
+        "enum": [
+          "healthy",
+          "degraded",
+          "action_required",
+          "unknown"
+        ],
+        "title": "DeviceHealthLevel"
+      },
+      "DeviceHealthOut": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "device_id": {
+            "type": "string",
+            "pattern": "^core2-[0-9a-f]{12}$",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Boot Id"
+          },
+          "firmware_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Firmware Version"
+          },
+          "build_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Build Id"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uptime Ms"
+          },
+          "sequence": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Sequence"
+          },
+          "level": {
+            "$ref": "#/components/schemas/DeviceHealthLevel"
+          },
+          "reset_reason": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Reset Reason"
+          },
+          "boot_count": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Boot Count"
+          },
+          "wifi": {
+            "$ref": "#/components/schemas/HealthWifi"
+          },
+          "config": {
+            "$ref": "#/components/schemas/HealthConfig"
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/HealthFreshness"
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/HealthTasks"
+          },
+          "queues": {
+            "$ref": "#/components/schemas/HealthQueues"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/HealthStorage"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/HealthMemory"
+          },
+          "sensors": {
+            "$ref": "#/components/schemas/HealthSensors"
+          },
+          "uploader_status": {
+            "$ref": "#/components/schemas/UploaderHealthStatus"
+          },
+          "ota": {
+            "$ref": "#/components/schemas/HealthOta"
+          },
+          "debug": {
+            "$ref": "#/components/schemas/HealthDebug"
+          },
+          "safe_mode": {
+            "type": "boolean",
+            "title": "Safe Mode"
+          },
+          "received_at_ms": {
+            "type": "integer",
+            "title": "Received At Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "device_id",
+          "boot_id",
+          "firmware_version",
+          "build_id",
+          "uptime_ms",
+          "sequence",
+          "level",
+          "reset_reason",
+          "boot_count",
+          "wifi",
+          "config",
+          "freshness",
+          "tasks",
+          "queues",
+          "storage",
+          "memory",
+          "sensors",
+          "uploader_status",
+          "ota",
+          "debug",
+          "safe_mode",
+          "received_at_ms"
+        ],
+        "title": "DeviceHealthOut"
+      },
+      "DeviceHealthPage": {
+        "properties": {
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceHealthOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceHealthOut"
+            },
+            "type": "array",
+            "title": "History"
+          },
+          "server_online": {
+            "type": "boolean",
+            "title": "Server Online"
+          },
+          "online_threshold_ms": {
+            "type": "integer",
+            "title": "Online Threshold Ms"
+          },
+          "last_activity_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "latest",
+          "history",
+          "server_online",
+          "online_threshold_ms",
+          "last_activity_at_ms"
+        ],
+        "title": "DeviceHealthPage"
+      },
+      "DeviceHealthReport": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "device_id": {
+            "type": "string",
+            "pattern": "^core2-[0-9a-f]{12}$",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Boot Id"
+          },
+          "firmware_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Firmware Version"
+          },
+          "build_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Build Id"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uptime Ms"
+          },
+          "sequence": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Sequence"
+          },
+          "level": {
+            "$ref": "#/components/schemas/DeviceHealthLevel"
+          },
+          "reset_reason": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Reset Reason"
+          },
+          "boot_count": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Boot Count"
+          },
+          "wifi": {
+            "$ref": "#/components/schemas/HealthWifi"
+          },
+          "config": {
+            "$ref": "#/components/schemas/HealthConfig"
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/HealthFreshness"
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/HealthTasks"
+          },
+          "queues": {
+            "$ref": "#/components/schemas/HealthQueues"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/HealthStorage"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/HealthMemory"
+          },
+          "sensors": {
+            "$ref": "#/components/schemas/HealthSensors"
+          },
+          "uploader_status": {
+            "$ref": "#/components/schemas/UploaderHealthStatus"
+          },
+          "ota": {
+            "$ref": "#/components/schemas/HealthOta"
+          },
+          "debug": {
+            "$ref": "#/components/schemas/HealthDebug"
+          },
+          "safe_mode": {
+            "type": "boolean",
+            "title": "Safe Mode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "device_id",
+          "boot_id",
+          "firmware_version",
+          "build_id",
+          "uptime_ms",
+          "sequence",
+          "level",
+          "reset_reason",
+          "boot_count",
+          "wifi",
+          "config",
+          "freshness",
+          "tasks",
+          "queues",
+          "storage",
+          "memory",
+          "sensors",
+          "uploader_status",
+          "ota",
+          "debug",
+          "safe_mode"
+        ],
+        "title": "DeviceHealthReport"
+      },
+      "DeviceReleaseOverview": {
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceReleaseTargetOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseStatusOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "target",
+          "latest_status"
+        ],
+        "title": "DeviceReleaseOverview"
+      },
+      "DeviceReleaseSelection": {
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "maxLength": 48,
+            "minLength": 1,
+            "pattern": "^rel-[0-9a-f]{32}$",
+            "title": "Release Id"
+          },
+          "selected_by": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Selected By",
+            "default": "presence-console"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "release_id"
+        ],
+        "title": "DeviceReleaseSelection"
+      },
+      "DeviceReleaseTargetOut": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseSummary"
+          },
+          "selected_at_ms": {
+            "type": "integer",
+            "title": "Selected At Ms"
+          },
+          "selected_by": {
+            "type": "string",
+            "title": "Selected By"
+          },
+          "completed_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_id",
+          "release",
+          "selected_at_ms",
+          "selected_by",
+          "completed_at_ms"
+        ],
+        "title": "DeviceReleaseTargetOut"
+      },
+      "DiagnosticSnapshotCommand": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "diagnostic_snapshot",
+            "title": "Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "DiagnosticSnapshotCommand"
       },
       "FeedbackCreate": {
         "properties": {
@@ -1757,6 +3976,302 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HealthConfig": {
+        "properties": {
+          "desired_revision": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Desired Revision"
+          },
+          "stored_revision": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Stored Revision"
+          },
+          "applied_revision": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Applied Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "desired_revision",
+          "stored_revision",
+          "applied_revision"
+        ],
+        "title": "HealthConfig"
+      },
+      "HealthDebug": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_]+$",
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "active",
+          "state"
+        ],
+        "title": "HealthDebug"
+      },
+      "HealthFreshness": {
+        "properties": {
+          "last_telemetry_ack_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Telemetry Ack Ms"
+          },
+          "last_config_attempt_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Config Attempt Ms"
+          },
+          "last_room_fetch_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Room Fetch Ms"
+          },
+          "last_weather_fetch_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Weather Fetch Ms"
+          },
+          "telemetry_ack_result": {
+            "$ref": "#/components/schemas/HealthOperationResult"
+          },
+          "config_result": {
+            "$ref": "#/components/schemas/HealthOperationResult"
+          },
+          "room_fetch_result": {
+            "$ref": "#/components/schemas/HealthOperationResult"
+          },
+          "weather_fetch_result": {
+            "$ref": "#/components/schemas/HealthOperationResult"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "telemetry_ack_result",
+          "config_result",
+          "room_fetch_result",
+          "weather_fetch_result"
+        ],
+        "title": "HealthFreshness"
+      },
+      "HealthIngestResponse": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "title": "Boot Id"
+          },
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          },
+          "duplicate": {
+            "type": "boolean",
+            "title": "Duplicate"
+          },
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "retained_reports": {
+            "type": "integer",
+            "title": "Retained Reports"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_id",
+          "boot_id",
+          "sequence",
+          "duplicate",
+          "server_utc_ms",
+          "retained_reports"
+        ],
+        "title": "HealthIngestResponse"
+      },
+      "HealthMemory": {
+        "properties": {
+          "free_heap_bytes": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Free Heap Bytes"
+          },
+          "min_free_heap_bytes": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Min Free Heap Bytes"
+          },
+          "largest_free_block_bytes": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Largest Free Block Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "free_heap_bytes",
+          "min_free_heap_bytes",
+          "largest_free_block_bytes"
+        ],
+        "title": "HealthMemory"
+      },
+      "HealthOperationResult": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "ok",
+          "retrying",
+          "rejected",
+          "error"
+        ],
+        "title": "HealthOperationResult"
+      },
+      "HealthOta": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_]+$",
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "active",
+          "state"
+        ],
+        "title": "HealthOta"
+      },
+      "HealthQueues": {
+        "properties": {
+          "telemetry_depth": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Telemetry Depth"
+          },
+          "telemetry_capacity": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Telemetry Capacity"
+          },
+          "dropped_samples": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Dropped Samples"
+          },
+          "dropped_critical": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Dropped Critical"
+          },
+          "feedback_depth": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Feedback Depth"
+          },
+          "feedback_capacity": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Feedback Capacity"
+          },
+          "feedback_dropped_full": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Feedback Dropped Full"
+          },
+          "feedback_rejected_invalid": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Feedback Rejected Invalid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "telemetry_depth",
+          "telemetry_capacity",
+          "dropped_samples",
+          "dropped_critical",
+          "feedback_depth",
+          "feedback_capacity",
+          "feedback_dropped_full",
+          "feedback_rejected_invalid"
+        ],
+        "title": "HealthQueues"
+      },
       "HealthResponse": {
         "properties": {
           "ok": {
@@ -1780,6 +4295,192 @@
           "server_utc_ms"
         ],
         "title": "HealthResponse"
+      },
+      "HealthSensors": {
+        "properties": {
+          "pir_status": {
+            "$ref": "#/components/schemas/SensorHealthStatus"
+          },
+          "mic_status": {
+            "$ref": "#/components/schemas/SensorHealthStatus"
+          },
+          "pir_only_mode": {
+            "type": "boolean",
+            "title": "Pir Only Mode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pir_status",
+          "mic_status",
+          "pir_only_mode"
+        ],
+        "title": "HealthSensors"
+      },
+      "HealthStorage": {
+        "properties": {
+          "filesystem_ready": {
+            "type": "boolean",
+            "title": "Filesystem Ready"
+          },
+          "spool_files": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Spool Files"
+          },
+          "feedback_wait_files": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Feedback Wait Files"
+          },
+          "feedback_ready_files": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Feedback Ready Files"
+          },
+          "dead_files": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Dead Files"
+          },
+          "oldest_backlog_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Backlog Age Ms"
+          },
+          "littlefs_total_bytes": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Littlefs Total Bytes"
+          },
+          "littlefs_used_bytes": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Littlefs Used Bytes"
+          },
+          "littlefs_free_bytes": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Littlefs Free Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "filesystem_ready",
+          "spool_files",
+          "feedback_wait_files",
+          "feedback_ready_files",
+          "dead_files",
+          "littlefs_total_bytes",
+          "littlefs_used_bytes",
+          "littlefs_free_bytes"
+        ],
+        "title": "HealthStorage"
+      },
+      "HealthTasks": {
+        "properties": {
+          "main_heartbeat_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Main Heartbeat Ms"
+          },
+          "uploader_heartbeat_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uploader Heartbeat Ms"
+          },
+          "main_stack_hwm": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Main Stack Hwm"
+          },
+          "uploader_stack_hwm": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uploader Stack Hwm"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "main_heartbeat_ms",
+          "uploader_heartbeat_ms",
+          "main_stack_hwm",
+          "uploader_stack_hwm"
+        ],
+        "title": "HealthTasks"
+      },
+      "HealthWifi": {
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "title": "Connected"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 45
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          },
+          "rssi_dbm": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 0.0,
+                "minimum": -127.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rssi Dbm"
+          },
+          "reconnect_count": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Reconnect Count"
+          },
+          "clock_synchronized": {
+            "type": "boolean",
+            "title": "Clock Synchronized"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "connected",
+          "reconnect_count",
+          "clock_synchronized"
+        ],
+        "title": "HealthWifi"
       },
       "IngestResponse": {
         "properties": {
@@ -1819,6 +4520,383 @@
           "desired_config_revision"
         ],
         "title": "IngestResponse"
+      },
+      "LeasedCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "title": "Command Id"
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "title": "Created At Ms"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "title": "Expires At Ms"
+          },
+          "lease_id": {
+            "type": "string",
+            "title": "Lease Id"
+          },
+          "lease_expires_at_ms": {
+            "type": "integer",
+            "title": "Lease Expires At Ms"
+          },
+          "delivery_attempt": {
+            "type": "integer",
+            "title": "Delivery Attempt"
+          },
+          "command": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticSnapshotCommand"
+              },
+              {
+                "$ref": "#/components/schemas/SetLogLevelCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RecalibrateMicrophoneCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RetryUploadCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RebootCommand"
+              },
+              {
+                "$ref": "#/components/schemas/OpenDevOtaCommand"
+              }
+            ],
+            "title": "Command",
+            "discriminator": {
+              "propertyName": "action",
+              "mapping": {
+                "diagnostic_snapshot": "#/components/schemas/DiagnosticSnapshotCommand",
+                "open_dev_ota": "#/components/schemas/OpenDevOtaCommand",
+                "reboot": "#/components/schemas/RebootCommand",
+                "recalibrate_microphone": "#/components/schemas/RecalibrateMicrophoneCommand",
+                "retry_upload": "#/components/schemas/RetryUploadCommand",
+                "set_log_level": "#/components/schemas/SetLogLevelCommand"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "created_at_ms",
+          "expires_at_ms",
+          "lease_id",
+          "lease_expires_at_ms",
+          "delivery_attempt",
+          "command"
+        ],
+        "title": "LeasedCommand"
+      },
+      "OpenDevOtaCommand": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "open_dev_ota",
+            "title": "Action"
+          },
+          "requires_local_confirmation": {
+            "type": "boolean",
+            "const": true,
+            "title": "Requires Local Confirmation",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "OpenDevOtaCommand"
+      },
+      "OperationalLogBatchIn": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "batch_id": {
+            "type": "string",
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Batch Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Boot Id"
+          },
+          "build_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Build Id"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/OperationalLogRecord"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "minItems": 1,
+            "title": "Records"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "batch_id",
+          "boot_id",
+          "build_id",
+          "records"
+        ],
+        "title": "OperationalLogBatchIn"
+      },
+      "OperationalLogIngestResponse": {
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "stored": {
+            "type": "integer",
+            "title": "Stored"
+          },
+          "duplicates": {
+            "type": "integer",
+            "title": "Duplicates"
+          },
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "retained_records": {
+            "type": "integer",
+            "title": "Retained Records"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "batch_id",
+          "stored",
+          "duplicates",
+          "server_utc_ms",
+          "retained_records"
+        ],
+        "title": "OperationalLogIngestResponse"
+      },
+      "OperationalLogLevel": {
+        "type": "string",
+        "enum": [
+          "debug",
+          "info",
+          "warning",
+          "error"
+        ],
+        "title": "OperationalLogLevel"
+      },
+      "OperationalLogOut": {
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Sequence"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uptime Ms"
+          },
+          "level": {
+            "$ref": "#/components/schemas/OperationalLogLevel"
+          },
+          "event_type": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "title": "Event Type"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "fields": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 24,
+            "title": "Fields"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "title": "Boot Id"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "received_at_ms": {
+            "type": "integer",
+            "title": "Received At Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sequence",
+          "uptime_ms",
+          "level",
+          "event_type",
+          "device_id",
+          "boot_id",
+          "build_id",
+          "received_at_ms"
+        ],
+        "title": "OperationalLogOut"
+      },
+      "OperationalLogPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperationalLogOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "retained_records": {
+            "type": "integer",
+            "title": "Retained Records"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "retained_records",
+          "truncated"
+        ],
+        "title": "OperationalLogPage"
+      },
+      "OperationalLogRecord": {
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Sequence"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Uptime Ms"
+          },
+          "level": {
+            "$ref": "#/components/schemas/OperationalLogLevel"
+          },
+          "event_type": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "title": "Event Type"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "fields": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 24,
+            "title": "Fields"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sequence",
+          "uptime_ms",
+          "level",
+          "event_type"
+        ],
+        "title": "OperationalLogRecord"
       },
       "PresenceConfig": {
         "properties": {
@@ -1894,6 +4972,450 @@
           "cooldown"
         ],
         "title": "PresenceState"
+      },
+      "RebootCommand": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "reboot",
+            "title": "Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "RebootCommand"
+      },
+      "RecalibrateMicrophoneCommand": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "recalibrate_microphone",
+            "title": "Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "RecalibrateMicrophoneCommand"
+      },
+      "ReleaseBundleImport": {
+        "properties": {
+          "bundle_base64": {
+            "type": "string",
+            "maxLength": 104857600,
+            "minLength": 1,
+            "title": "Bundle Base64"
+          },
+          "imported_by": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Imported By",
+            "default": "presence-console"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bundle_base64"
+        ],
+        "title": "ReleaseBundleImport"
+      },
+      "ReleasePhase": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "downloading",
+          "verifying",
+          "reboot_pending",
+          "validating",
+          "running",
+          "failed",
+          "rejected",
+          "rolled_back"
+        ],
+        "title": "ReleasePhase"
+      },
+      "ReleaseStatusIn": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version"
+          },
+          "status_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Status Id"
+          },
+          "desired_release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 48,
+                "pattern": "^rel-[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desired Release Id"
+          },
+          "running_release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 48,
+                "pattern": "^rel-[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Release Id"
+          },
+          "previous_release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 48,
+                "pattern": "^rel-[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Release Id"
+          },
+          "last_known_good_release_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 48,
+                "pattern": "^rel-[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Known Good Release Id"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ReleasePhase"
+          },
+          "progress_percent": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Percent"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "rollback_outcome": {
+            "$ref": "#/components/schemas/RollbackOutcome",
+            "default": "none"
+          },
+          "firmware_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Firmware Version"
+          },
+          "build_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Build Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "status_id",
+          "phase",
+          "firmware_version",
+          "build_id"
+        ],
+        "title": "ReleaseStatusIn"
+      },
+      "ReleaseStatusOut": {
+        "properties": {
+          "status_id": {
+            "type": "string",
+            "title": "Status Id"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "received_at_ms": {
+            "type": "integer",
+            "title": "Received At Ms"
+          },
+          "desired_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desired Release Id"
+          },
+          "running_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Release Id"
+          },
+          "previous_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Release Id"
+          },
+          "last_known_good_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Known Good Release Id"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ReleasePhase"
+          },
+          "progress_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Percent"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "rollback_outcome": {
+            "$ref": "#/components/schemas/RollbackOutcome"
+          },
+          "firmware_version": {
+            "type": "string",
+            "title": "Firmware Version"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status_id",
+          "device_id",
+          "received_at_ms",
+          "desired_release_id",
+          "running_release_id",
+          "previous_release_id",
+          "last_known_good_release_id",
+          "phase",
+          "progress_percent",
+          "last_error",
+          "rollback_outcome",
+          "firmware_version",
+          "build_id"
+        ],
+        "title": "ReleaseStatusOut"
+      },
+      "ReleaseStatusResponse": {
+        "properties": {
+          "status_id": {
+            "type": "string",
+            "title": "Status Id"
+          },
+          "duplicate": {
+            "type": "boolean",
+            "title": "Duplicate"
+          },
+          "server_utc_ms": {
+            "type": "integer",
+            "title": "Server Utc Ms"
+          },
+          "desired_release_completed": {
+            "type": "boolean",
+            "title": "Desired Release Completed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status_id",
+          "duplicate",
+          "server_utc_ms",
+          "desired_release_completed"
+        ],
+        "title": "ReleaseStatusResponse"
+      },
+      "ReleaseSummary": {
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "title": "Release Id"
+          },
+          "hardware_model": {
+            "type": "string",
+            "title": "Hardware Model"
+          },
+          "firmware_version": {
+            "type": "string",
+            "title": "Firmware Version"
+          },
+          "release_counter": {
+            "type": "integer",
+            "title": "Release Counter"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "image_size": {
+            "type": "integer",
+            "title": "Image Size"
+          },
+          "image_sha256": {
+            "type": "string",
+            "title": "Image Sha256"
+          },
+          "elf_size": {
+            "type": "integer",
+            "title": "Elf Size"
+          },
+          "elf_sha256": {
+            "type": "string",
+            "title": "Elf Sha256"
+          },
+          "key_id": {
+            "type": "string",
+            "title": "Key Id"
+          },
+          "signature_format": {
+            "type": "string",
+            "const": "ecdsa-p256-sha256-raw",
+            "title": "Signature Format"
+          },
+          "imported_at_ms": {
+            "type": "integer",
+            "title": "Imported At Ms"
+          },
+          "imported_by": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:+-]+$",
+            "title": "Imported By"
+          },
+          "verified": {
+            "type": "boolean",
+            "title": "Verified"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "release_id",
+          "hardware_model",
+          "firmware_version",
+          "release_counter",
+          "build_id",
+          "image_size",
+          "image_sha256",
+          "elf_size",
+          "elf_sha256",
+          "key_id",
+          "signature_format",
+          "imported_at_ms",
+          "imported_by",
+          "verified"
+        ],
+        "title": "ReleaseSummary"
+      },
+      "RetryUploadCommand": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "retry_upload",
+            "title": "Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "RetryUploadCommand"
+      },
+      "RollbackOutcome": {
+        "type": "string",
+        "enum": [
+          "none",
+          "not_needed",
+          "succeeded",
+          "failed",
+          "unknown"
+        ],
+        "title": "RollbackOutcome"
       },
       "SampleOut": {
         "properties": {
@@ -2129,6 +5651,149 @@
         ],
         "title": "SampleRecord"
       },
+      "SanitizedCoreDumpPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SanitizedCoreDumpSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "retained_reports": {
+            "type": "integer",
+            "title": "Retained Reports"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "retained_reports"
+        ],
+        "title": "SanitizedCoreDumpPage"
+      },
+      "SanitizedCoreDumpSummary": {
+        "properties": {
+          "crash_id": {
+            "type": "string",
+            "title": "Crash Id"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "title": "Boot Id"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "reset_reason": {
+            "type": "string",
+            "title": "Reset Reason"
+          },
+          "dump_sha256": {
+            "type": "string",
+            "title": "Dump Sha256"
+          },
+          "dump_size": {
+            "type": "integer",
+            "title": "Dump Size"
+          },
+          "received_at_ms": {
+            "type": "integer",
+            "title": "Received At Ms"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "symbolication_status": {
+            "type": "string",
+            "enum": [
+              "matched_elf",
+              "missing_elf",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Symbolication Status"
+          },
+          "summary": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Summary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "crash_id",
+          "device_id",
+          "boot_id",
+          "build_id",
+          "reset_reason",
+          "dump_sha256",
+          "dump_size",
+          "received_at_ms",
+          "release_id",
+          "symbolication_status",
+          "summary"
+        ],
+        "title": "SanitizedCoreDumpSummary"
+      },
+      "SensorHealthStatus": {
+        "type": "string",
+        "enum": [
+          "healthy",
+          "degraded",
+          "fault",
+          "unknown"
+        ],
+        "title": "SensorHealthStatus"
+      },
+      "SetLogLevelCommand": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "set_log_level",
+            "title": "Action"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "event",
+              "debug_sensor"
+            ],
+            "title": "Level"
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "maximum": 600.0,
+            "minimum": 1.0,
+            "title": "Duration Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "level",
+          "duration_seconds"
+        ],
+        "title": "SetLogLevelCommand"
+      },
       "TelemetryBatch": {
         "properties": {
           "schema_version": {
@@ -2155,6 +5820,20 @@
             "maxLength": 64,
             "minLength": 1,
             "title": "Firmware Version"
+          },
+          "build_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:+-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Id"
           },
           "applied_config_revision": {
             "type": "integer",
@@ -2256,6 +5935,17 @@
             ],
             "title": "Applied Config Revision"
           },
+          "build_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Id"
+          },
           "from_state": {
             "anyOf": [
               {
@@ -2271,6 +5961,105 @@
           },
           "reason": {
             "$ref": "#/components/schemas/TransitionReason"
+          },
+          "pir": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir"
+          },
+          "pir_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir Age Ms"
+          },
+          "sound_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Active"
+          },
+          "sound_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Age Ms"
+          },
+          "mic_envelope": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mic Envelope"
+          },
+          "noise_floor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor"
+          },
+          "sound_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Threshold"
+          },
+          "brightness_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Before"
+          },
+          "brightness_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness After"
           }
         },
         "additionalProperties": false,
@@ -2284,9 +6073,19 @@
           "received_at_ms",
           "time_quality",
           "applied_config_revision",
+          "build_id",
           "from_state",
           "to_state",
-          "reason"
+          "reason",
+          "pir",
+          "pir_age_ms",
+          "sound_active",
+          "sound_age_ms",
+          "mic_envelope",
+          "noise_floor",
+          "sound_threshold",
+          "brightness_before",
+          "brightness_after"
         ],
         "title": "TransitionOut"
       },
@@ -2374,6 +6173,116 @@
           },
           "reason": {
             "$ref": "#/components/schemas/TransitionReason"
+          },
+          "pir": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir"
+          },
+          "pir_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir Age Ms"
+          },
+          "sound_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Active"
+          },
+          "sound_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Age Ms"
+          },
+          "mic_envelope": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mic Envelope"
+          },
+          "noise_floor": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor"
+          },
+          "sound_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sound Threshold"
+          },
+          "brightness_before": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 255.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Before"
+          },
+          "brightness_after": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 255.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness After"
           }
         },
         "additionalProperties": false,
@@ -2387,6 +6296,18 @@
           "reason"
         ],
         "title": "TransitionRecord"
+      },
+      "UploaderHealthStatus": {
+        "type": "string",
+        "enum": [
+          "starting",
+          "ready",
+          "retrying",
+          "filesystem_unavailable",
+          "operator_halted",
+          "task_unavailable"
+        ],
+        "title": "UploaderHealthStatus"
       },
       "ValidationError": {
         "properties": {

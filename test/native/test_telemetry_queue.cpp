@@ -24,6 +24,9 @@ TelemetryRecord transition(uint64_t seq) {
 }  // namespace
 
 int main() {
+  static_assert(presenceStateBrightness(PresenceState::kPresent) == 255);
+  static_assert(presenceStateBrightness(PresenceState::kCooldown) == 60);
+  static_assert(presenceStateBrightness(PresenceState::kIdle) == 0);
   TelemetryQueue queue;
   const size_t sampleLimit =
       TelemetryQueue::kCapacity - TelemetryQueue::kReservedTransitionSlots;
@@ -32,10 +35,12 @@ int main() {
   }
   assert(queue.push(sample(sampleLimit)) == QueuePushResult::kSampleDropped);
   assert(queue.droppedSamples() == 1);
+  assert(!queue.hasCritical());
 
   for (size_t index = sampleLimit; index < TelemetryQueue::kCapacity; ++index) {
     assert(queue.push(transition(index)) == QueuePushResult::kStored);
   }
+  assert(queue.hasCritical());
   assert(queue.size() == TelemetryQueue::kCapacity);
   assert(queue.push(transition(TelemetryQueue::kCapacity)) ==
          QueuePushResult::kCriticalDropped);
@@ -75,6 +80,29 @@ int main() {
   assert(!queue.commitPrefix(&wrong, 1));
   assert(queue.size() == 1);
   assert(queue.commitPrefix(&front, 1));
+
+  queue.setCriticalOnly(true);
+  assert(queue.criticalOnly());
+  assert(queue.push(sample(3500)) == QueuePushResult::kSampleDropped);
+  const TelemetryRecord guardedTransition = transition(3501);
+  assert(queue.push(guardedTransition) == QueuePushResult::kStored);
+  assert(queue.commitPrefix(&guardedTransition, 1));
+  queue.setCriticalOnly(false);
+  assert(!queue.criticalOnly());
+
+  // OTA preflight drains the queue before enabling critical-only mode, so the
+  // complete fixed capacity—not only the ordinary eight-slot reserve—remains
+  // available for transitions during a blocking network/flash interval.
+  queue.setCriticalOnly(true);
+  for (size_t index = 0; index < TelemetryQueue::kCapacity; ++index) {
+    assert(queue.push(transition(3600 + index)) == QueuePushResult::kStored);
+  }
+  assert(queue.push(transition(9999)) == QueuePushResult::kCriticalDropped);
+  TelemetryRecord guarded[TelemetryQueue::kCapacity] = {};
+  assert(queue.copyPrefix(guarded, TelemetryQueue::kCapacity) ==
+         TelemetryQueue::kCapacity);
+  assert(queue.commitPrefix(guarded, TelemetryQueue::kCapacity));
+  queue.setCriticalOnly(false);
 
   TelemetryRecord revisions[4] = {sample(4000), sample(4001), sample(4002),
                                   sample(4003)};

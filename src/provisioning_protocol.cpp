@@ -285,12 +285,15 @@ ProvisioningError normalizeAndValidateDeviceSettings(
   size_t ssidLength = 0;
   size_t passwordLength = 0;
   size_t tokenLength = 0;
+  size_t otaSecretLength = 0;
   if (!boundedStringLength(settings->ssid, sizeof(settings->ssid),
                            &ssidLength) ||
       !boundedStringLength(settings->password, sizeof(settings->password),
                            &passwordLength) ||
       !boundedStringLength(settings->token, sizeof(settings->token),
-                           &tokenLength)) {
+                           &tokenLength) ||
+      !boundedStringLength(settings->otaSecret, sizeof(settings->otaSecret),
+                           &otaSecretLength)) {
     return ProvisioningError::kInvalidSettings;
   }
   if (ssidLength == 0 || ssidLength > DeviceSettings::kMaxSsidBytes) {
@@ -301,6 +304,18 @@ ProvisioningError normalizeAndValidateDeviceSettings(
   }
   if (tokenLength == 0 || tokenLength > DeviceSettings::kMaxTokenBytes) {
     return ProvisioningError::kInvalidToken;
+  }
+  if (otaSecretLength != 0 &&
+      otaSecretLength != DeviceSettings::kOtaSecretBytes) {
+    return ProvisioningError::kInvalidOtaSecret;
+  }
+  for (size_t index = 0; index < otaSecretLength; ++index) {
+    const char value = settings->otaSecret[index];
+    if (!((value >= 'A' && value <= 'Z') ||
+          (value >= 'a' && value <= 'z') ||
+          (value >= '0' && value <= '9') || value == '-' || value == '_')) {
+      return ProvisioningError::kInvalidOtaSecret;
+    }
   }
   return validateAndNormalizeBaseUrl(settings->baseUrl,
                                      sizeof(settings->baseUrl));
@@ -316,10 +331,10 @@ ProvisioningError parseProvisioningSetCommand(
     return ProvisioningError::kEmbeddedNul;
   }
 
-  FieldSpan fields[7];
+  FieldSpan fields[8];
   size_t fieldCount = 0;
-  if (!splitCommand(command, commandLength, fields, 7, &fieldCount) ||
-      fieldCount != 7) {
+  if (!splitCommand(command, commandLength, fields, 8, &fieldCount) ||
+      (fieldCount != 7 && fieldCount != 8)) {
     return ProvisioningError::kInvalidFieldCount;
   }
   if (!spanEquals(fields[0], "PROVISION", 9) ||
@@ -351,6 +366,13 @@ ProvisioningError parseProvisioningSetCommand(
       decodeField(fields[6], candidate.token, DeviceSettings::kMaxTokenBytes);
   if (result != ProvisioningError::kOk) {
     return result;
+  }
+  if (fieldCount == 8) {
+    result = decodeField(fields[7], candidate.otaSecret,
+                         DeviceSettings::kOtaSecretBytes);
+    if (result != ProvisioningError::kOk) {
+      return result;
+    }
   }
 
   result = normalizeAndValidateDeviceSettings(&candidate);

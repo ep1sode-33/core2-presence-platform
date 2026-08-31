@@ -18,11 +18,14 @@ struct SlotKeys {
   const char* password;
   const char* baseUrl;
   const char* token;
+  const char* otaSecret;
 };
 
 constexpr SlotKeys kSlotKeys[] = {
-    {"a_valid", "a_ssid", "a_password", "a_base_url", "a_token"},
-    {"b_valid", "b_ssid", "b_password", "b_base_url", "b_token"},
+    {"a_valid", "a_ssid", "a_password", "a_base_url", "a_token",
+     "a_ota"},
+    {"b_valid", "b_ssid", "b_password", "b_base_url", "b_token",
+     "b_ota"},
 };
 
 void clearSettings(DeviceSettings* settings) {
@@ -75,6 +78,15 @@ ReadFieldResult readField(Preferences& preferences, const char* key,
   return ReadFieldResult::kOk;
 }
 
+ReadFieldResult readOptionalField(Preferences& preferences, const char* key,
+                                  char* destination, size_t capacity) {
+  if (preferences.getBytesLength(key) == 0) {
+    destination[0] = '\0';
+    return ReadFieldResult::kOk;
+  }
+  return readField(preferences, key, destination, capacity);
+}
+
 DeviceSettingsStorageResult readSlot(Preferences& preferences, uint8_t slot,
                                      DeviceSettings* output) {
   const SlotKeys& keys = kSlotKeys[slot];
@@ -92,14 +104,19 @@ DeviceSettingsStorageResult readSlot(Preferences& preferences, uint8_t slot,
       preferences, keys.baseUrl, candidate.baseUrl, sizeof(candidate.baseUrl));
   const ReadFieldResult token = readField(
       preferences, keys.token, candidate.token, sizeof(candidate.token));
+  const ReadFieldResult otaSecret =
+      readOptionalField(preferences, keys.otaSecret, candidate.otaSecret,
+                        sizeof(candidate.otaSecret));
   if (ssid == ReadFieldResult::kReadFailed ||
       password == ReadFieldResult::kReadFailed ||
       baseUrl == ReadFieldResult::kReadFailed ||
-      token == ReadFieldResult::kReadFailed) {
+      token == ReadFieldResult::kReadFailed ||
+      otaSecret == ReadFieldResult::kReadFailed) {
     return DeviceSettingsStorageResult::kReadFailed;
   }
   if (ssid != ReadFieldResult::kOk || password != ReadFieldResult::kOk ||
       baseUrl != ReadFieldResult::kOk || token != ReadFieldResult::kOk ||
+      otaSecret != ReadFieldResult::kOk ||
       normalizeAndValidateDeviceSettings(&candidate) !=
           ProvisioningError::kOk) {
     return DeviceSettingsStorageResult::kInvalidSettings;
@@ -146,7 +163,9 @@ DeviceSettingsStorageResult saveDeviceSettings(
       writeField(preferences, keys.baseUrl, normalized.baseUrl,
                  sizeof(normalized.baseUrl)) &&
       writeField(preferences, keys.token, normalized.token,
-                 sizeof(normalized.token));
+                 sizeof(normalized.token)) &&
+      writeField(preferences, keys.otaSecret, normalized.otaSecret,
+                 sizeof(normalized.otaSecret));
   if (!fieldsWritten || preferences.putBool(keys.valid, true) != 1 ||
       preferences.putUChar(kActiveSlotKey, targetSlot) != 1) {
     preferences.end();

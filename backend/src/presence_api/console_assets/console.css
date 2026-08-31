@@ -121,6 +121,9 @@ h2 { margin-bottom: 0.25rem; font-size: 1.15rem; letter-spacing: -0.015em; }
 .connection-state[data-tone="online"]::before { background: var(--green); box-shadow: 0 0 12px var(--green); }
 .connection-state[data-tone="offline"]::before { background: var(--red); }
 .connection-state[data-tone="loading"]::before { background: var(--accent); }
+.count-pill[data-level="healthy"] { color: var(--green); border-color: var(--green); }
+.count-pill[data-level="degraded"] { color: var(--accent); border-color: var(--accent); }
+.count-pill[data-level="action_required"] { color: var(--red); border-color: var(--red); }
 
 main {
   display: grid;
@@ -185,6 +188,16 @@ canvas { display: block; width: 100%; height: 100%; }
 .stat-list div:last-child { border-bottom: 0; }
 .stat-list dt { color: var(--muted); font-size: 0.8rem; }
 .stat-list dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 0.85rem; font-weight: 750; }
+.compact-stats div { padding: 0.52rem 0; }
+
+.ops-controls {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) auto;
+  align-items: end;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+.command-controls { grid-template-columns: minmax(18rem, 1fr) auto; margin-bottom: 1rem; }
 
 .table-wrap { max-height: 24rem; overflow: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
@@ -192,6 +205,8 @@ th { position: sticky; top: 0; background: var(--panel); color: var(--muted); te
 th, td { border-bottom: 1px solid var(--border); padding: 0.68rem 0.5rem; vertical-align: top; }
 td { font-variant-numeric: tabular-nums; }
 tr[data-mismatch="true"] td { color: #ffd0d0; background: rgb(255 107 107 / 6%); }
+tr[data-level="error"] td, tr[data-status="failed"] td, tr[data-status="rejected"] td { color: #ffd0d0; }
+tr[data-level="warning"] td, tr[data-status="expired"] td { color: #ffe2a8; }
 .empty-cell { color: var(--muted); text-align: center; }
 
 .config-form { display: grid; grid-template-columns: repeat(4, minmax(10rem, 1fr)); gap: 1rem; }
@@ -219,6 +234,7 @@ dialog::backdrop { background: rgb(3 7 11 / 78%); backdrop-filter: blur(5px); }
   .message { grid-column: 1 / -1; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .config-form { grid-template-columns: 1fr 1fr; }
+  .ops-controls, .command-controls { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 580px) {

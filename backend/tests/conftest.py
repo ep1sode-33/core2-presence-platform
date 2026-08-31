@@ -13,7 +13,14 @@ from presence_api.main import create_app
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     app = create_app(Settings(database_path=tmp_path / "presence.db", api_token=None))
-    with TestClient(app, client=("192.168.0.42", 50_000)) as test_client:
+    with TestClient(
+        app,
+        client=("192.168.0.42", 50_000),
+        headers={
+            "Host": "192.168.0.46",
+            "Origin": "http://192.168.0.46",
+        },
+    ) as test_client:
         yield test_client
 
 

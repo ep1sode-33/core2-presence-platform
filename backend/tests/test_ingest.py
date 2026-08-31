@@ -276,3 +276,35 @@ def test_concurrent_batch_retries_are_serialized(
 
     assert sorted(result.stored for result in results) == [0, 2]
     assert sorted(result.duplicates for result in results) == [0, 2]
+
+
+def test_v07_transition_evidence_and_build_id_are_retained(
+    client: TestClient, sample_batch: dict
+) -> None:
+    batch = deepcopy(sample_batch)
+    batch["build_id"] = "git.0123456789ab"
+    batch["records"][1].update(
+        {
+            "pir": True,
+            "pir_age_ms": 0,
+            "sound_active": False,
+            "sound_age_ms": 1_500,
+            "mic_envelope": 420.5,
+            "noise_floor": 390.0,
+            "sound_threshold": 700.0,
+            "brightness_before": 0,
+            "brightness_after": 255,
+        }
+    )
+    response = client.post(f"/v1/devices/{DEVICE}/batches", json=batch)
+    assert response.status_code == 200, response.text
+
+    transition = client.get(f"/v1/devices/{DEVICE}/transitions").json()["items"][0]
+    assert transition["build_id"] == "git.0123456789ab"
+    assert transition["pir"] is True
+    assert transition["pir_age_ms"] == 0
+    assert transition["sound_active"] is False
+    assert transition["sound_age_ms"] == 1_500
+    assert transition["mic_envelope"] == 420.5
+    assert transition["brightness_before"] == 0
+    assert transition["brightness_after"] == 255

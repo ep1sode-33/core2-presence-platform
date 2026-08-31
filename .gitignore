@@ -21,3 +21,9 @@ data/
 # Device-specific recovery image. Keep it local.
 backups/*.bin
 backups/*.sha256
+
+# Generated public OTA trust set. Private signing keys never belong here.
+src/ota_trust_keys.generated.h
+
+# Locally signed immutable release bundles and retained matching artifacts.
+dist/

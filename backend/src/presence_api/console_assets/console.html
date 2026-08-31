@@ -64,6 +64,55 @@
       </article>
     </section>
 
+    <section class="two-column">
+      <article class="panel" aria-labelledby="healthTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">DEVICE SELF-DIAGNOSTICS</p>
+            <h2 id="healthTitle">Health</h2>
+          </div>
+          <p class="count-pill" id="healthLevel">UNKNOWN</p>
+        </div>
+        <dl class="stat-list">
+          <div><dt>Server connectivity</dt><dd id="healthConnectivity">—</dd></div>
+          <div><dt>Wi-Fi</dt><dd id="healthWifi">—</dd></div>
+          <div><dt>Build</dt><dd id="healthBuild">—</dd></div>
+          <div><dt>Tasks</dt><dd id="healthTasks">—</dd></div>
+          <div><dt>Queues</dt><dd id="healthQueues">—</dd></div>
+          <div><dt>Storage</dt><dd id="healthStorage">—</dd></div>
+          <div><dt>Memory</dt><dd id="healthMemory">—</dd></div>
+          <div><dt>Sensors</dt><dd id="healthSensors">—</dd></div>
+        </dl>
+      </article>
+
+      <article class="panel" aria-labelledby="releaseTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">SIGNED A/B UPDATE</p>
+            <h2 id="releaseTitle">Firmware release</h2>
+          </div>
+          <p class="count-pill" id="releasePhase">IDLE</p>
+        </div>
+        <dl class="stat-list compact-stats">
+          <div><dt>Desired</dt><dd id="releaseDesired">—</dd></div>
+          <div><dt>Running</dt><dd id="releaseRunning">—</dd></div>
+          <div><dt>Previous</dt><dd id="releasePrevious">—</dd></div>
+          <div><dt>Last known good</dt><dd id="releaseGood">—</dd></div>
+          <div><dt>Progress / rollback</dt><dd id="releaseProgress">—</dd></div>
+          <div><dt>Last error</dt><dd id="releaseError">—</dd></div>
+        </dl>
+        <div class="ops-controls">
+          <label>Verified release<select id="releaseSelect"><option value="">No releases imported</option></select></label>
+          <button id="reviewReleaseButton" type="button" disabled>Review release</button>
+        </div>
+        <div class="ops-controls">
+          <label>Import canonical .ota.zip<input id="releaseBundle" type="file" accept=".zip,.ota.zip,application/zip"></label>
+          <button id="importReleaseButton" class="secondary" type="button">Verify &amp; import</button>
+        </div>
+        <p id="releaseMessage" class="message" role="status" aria-live="polite"></p>
+      </article>
+    </section>
+
     <section class="panel chart-panel" aria-labelledby="timelineTitle">
       <div class="section-heading">
         <div>
@@ -130,6 +179,66 @@
       </article>
     </section>
 
+    <section class="panel" aria-labelledby="transitionsTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">DECISION AUDIT</p>
+          <h2 id="transitionsTitle">Recent state changes</h2>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Change</th><th>Reason</th><th>PIR evidence</th><th>Sound evidence</th><th>Mic / threshold</th><th>Brightness</th><th>Build / config</th></tr></thead>
+          <tbody id="transitionBody"><tr><td colspan="8" class="empty-cell">No transitions in window</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="two-column">
+      <article class="panel" aria-labelledby="logsTitle">
+        <div class="section-heading">
+          <div><p class="eyebrow">BOUNDED REMOTE RING</p><h2 id="logsTitle">Operational events</h2></div>
+          <p class="count-pill" id="logCount">0 retained</p>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Received</th><th>Level</th><th>Event</th><th>Fields</th></tr></thead>
+          <tbody id="logBody"><tr><td colspan="4" class="empty-cell">No operational events</td></tr></tbody>
+        </table></div>
+      </article>
+      <article class="panel" aria-labelledby="crashTitle">
+        <div class="section-heading">
+          <div><p class="eyebrow">SANITIZED ONLY</p><h2 id="crashTitle">Crash summaries</h2></div>
+          <p class="count-pill" id="crashCount">0 retained</p>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Received</th><th>Reset</th><th>Build</th><th>Analysis</th></tr></thead>
+          <tbody id="crashBody"><tr><td colspan="4" class="empty-cell">No crash reports</td></tr></tbody>
+        </table></div>
+        <p class="muted">Raw dumps may contain credentials and are never available through this tokenless Console.</p>
+      </article>
+    </section>
+
+    <section class="panel" aria-labelledby="commandsTitle">
+      <div class="section-heading">
+        <div><p class="eyebrow">LEASED ONE-SHOT CONTROL</p><h2 id="commandsTitle">Restricted commands</h2></div>
+      </div>
+      <div class="ops-controls command-controls">
+        <label>Action<select id="commandAction">
+          <option value="diagnostic_snapshot">Capture diagnostic snapshot</option>
+          <option value="set_log_level">Detailed sensor log for 10 minutes</option>
+          <option value="recalibrate_microphone">Recalibrate microphone</option>
+          <option value="retry_upload">Retry upload now</option>
+          <option value="reboot">Reboot application</option>
+          <option value="open_dev_ota">Request locally confirmed dev OTA window</option>
+        </select></label>
+        <button id="issueCommandButton" type="button">Issue one-shot command</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Created</th><th>Action</th><th>Status</th><th>Attempts</th><th>Result</th></tr></thead>
+        <tbody id="commandBody"><tr><td colspan="5" class="empty-cell">No commands</td></tr></tbody>
+      </table></div>
+    </section>
+
     <section class="panel" aria-labelledby="configTitle">
       <div class="section-heading">
         <div>
@@ -170,6 +279,19 @@
         <button id="applyButton" value="default" type="button" disabled>
           Apply configuration
         </button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="releaseDialog" aria-labelledby="releaseConfirmTitle">
+    <form method="dialog" class="dialog-card">
+      <p class="eyebrow">SIGNED FIRMWARE WRITE</p>
+      <h2 id="releaseConfirmTitle">Confirm desired release</h2>
+      <p id="releaseReviewText"></p>
+      <label class="confirm-check"><input id="releaseConfirmCheckbox" type="checkbox">I reviewed the model, counter, build, and version and want this device to download the release.</label>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary">Cancel</button>
+        <button id="applyReleaseButton" value="default" type="button" disabled>Select release</button>
       </div>
     </form>
   </dialog>
