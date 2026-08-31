@@ -198,8 +198,8 @@ async function connect() {
     startRefreshTimer();
   } catch (error) {
     stopRefreshTimer();
-    setConnection(error.status === 403 ? "Outside LAN" : "Unavailable", "offline");
-    setMessage(error.status === 403 ? "This console is available only on the home LAN." : error.message, "error");
+    setConnection(error.status === 403 ? "Access denied" : "Unavailable", "offline");
+    setMessage(error.status === 403 ? "This console is available only from an approved LAN or Tailnet device." : error.message, "error");
   }
 }
 
@@ -238,7 +238,7 @@ async function loadSnapshot({ quiet = false } = {}) {
     setMessage(`Updated ${formatEastern(snapshot.server_utc_ms, true)} Eastern`, "success");
   } catch (error) {
     if (error.name === "AbortError") return;
-    setConnection(error.status === 403 ? "Outside LAN" : "Unavailable", "offline");
+    setConnection(error.status === 403 ? "Access denied" : "Unavailable", "offline");
     setMessage(error.message, "error");
     if (error.status === 403) stopRefreshTimer();
   } finally {

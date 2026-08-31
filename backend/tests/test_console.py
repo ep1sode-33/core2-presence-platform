@@ -8,13 +8,15 @@ from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 from presence_api.config import Settings
-from presence_api.console import ONLINE_THRESHOLD_MS, require_console_lan
+from presence_api.console import ONLINE_THRESHOLD_MS, require_console_access
 from presence_api.main import create_app
 
 DEVICE = "core2-2cbcbb81eb60"
 
 
-def test_console_shell_is_lan_only_and_contains_no_token_flow(tmp_path: Path) -> None:
+def test_console_shell_uses_a_trusted_source_without_a_token_flow(
+    tmp_path: Path,
+) -> None:
     app = create_app(
         Settings(database_path=tmp_path / "secure.db", api_token="secret-token")
     )
@@ -89,7 +91,13 @@ def test_console_data_uses_lan_source_while_existing_api_keeps_bearer_auth(
 
 @pytest.mark.parametrize(
     "client_host",
-    ["192.168.1.42", "100.117.242.46", "127.0.0.1", "not-an-ip"],
+    [
+        "192.168.1.42",
+        "100.117.242.46",
+        "100.118.9.99",
+        "127.0.0.1",
+        "not-an-ip",
+    ],
 )
 def test_console_rejects_every_source_outside_the_home_lan(
     tmp_path: Path, client_host: str
@@ -139,8 +147,91 @@ def test_console_rejects_every_source_outside_the_home_lan(
 def test_console_rejects_a_missing_client_address() -> None:
     request = Request({"type": "http", "client": None})
     with pytest.raises(HTTPException) as error:
-        require_console_lan(request)
+        require_console_access(request)
     assert error.value.status_code == 403
+
+
+def test_console_allows_only_the_configured_tailnet_client_and_origin(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            database_path=tmp_path / "tailnet.db",
+            api_token=None,
+            console_tailnet_host="100.117.242.46",
+            console_tailnet_client="100.118.9.99",
+        )
+    )
+    tailnet_headers = {
+        "Host": "100.117.242.46:8081",
+        "Origin": "http://100.117.242.46:8081",
+    }
+    with TestClient(app, client=("100.118.9.99", 50_000)) as client:
+        assert (
+            client.get("/console", headers={"Host": "100.117.242.46:8081"}).status_code
+            == 200
+        )
+        assert client.get("/console", headers=tailnet_headers).status_code == 200
+        assert (
+            client.get("/v1/console/devices", headers=tailnet_headers).status_code
+            == 200
+        )
+        command = client.post(
+            f"/v1/console/devices/{DEVICE}/commands",
+            headers=tailnet_headers,
+            json={"command": {"action": "diagnostic_snapshot"}},
+        )
+        assert command.status_code == 200
+        assert (
+            client.post(
+                f"/v1/console/devices/{DEVICE}/commands",
+                headers={"Host": "100.117.242.46:8081"},
+                json={"command": {"action": "diagnostic_snapshot"}},
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/console",
+                headers={"Host": "192.168.0.46:8081"},
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/console",
+                headers={
+                    "Host": "100.117.242.46:8081",
+                    "Origin": "http://100.117.242.46:8082",
+                },
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/console",
+                headers={
+                    "Host": "100.117.242.46:8081",
+                    "Origin": "http://192.168.0.46:8081",
+                },
+            ).status_code
+            == 403
+        )
+
+    with TestClient(app, client=("100.118.9.98", 50_000)) as client:
+        assert (
+            client.get(
+                "/console",
+                headers={
+                    **tailnet_headers,
+                    "X-Forwarded-For": "100.118.9.99",
+                },
+            ).status_code
+            == 403
+        )
+
+    with TestClient(app, client=("192.168.0.42", 50_000)) as client:
+        assert client.get("/console", headers=tailnet_headers).status_code == 403
 
 
 @pytest.mark.parametrize(

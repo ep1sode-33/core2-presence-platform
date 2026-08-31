@@ -7,6 +7,9 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
 
+_HOME_LAN_NETWORK = ip_network("192.168.0.0/24")
+_TAILSCALE_IPV4_NETWORK = ip_network("100.64.0.0/10")
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -16,6 +19,8 @@ class Settings:
     ota_trusted_keys: tuple[tuple[str, Path], ...] = ()
     coredump_decoder: Path | None = None
     console_host: str = "192.168.0.46"
+    console_tailnet_host: str | None = None
+    console_tailnet_client: str | None = None
 
     @staticmethod
     def _load_console_host(value: str) -> str:
@@ -25,9 +30,39 @@ class Settings:
             raise RuntimeError(
                 "Console host must be a literal LAN IP address"
             ) from error
-        if address not in ip_network("192.168.0.0/24"):
+        if address not in _HOME_LAN_NETWORK:
             raise RuntimeError("Console host must be inside 192.168.0.0/24")
         return str(address)
+
+    @staticmethod
+    def _load_console_tailnet_access(
+        host_value: str | None, client_value: str | None
+    ) -> tuple[str | None, str | None]:
+        host_value = host_value.strip() if host_value is not None else ""
+        client_value = client_value.strip() if client_value is not None else ""
+        if not host_value and not client_value:
+            return None, None
+        if not host_value or not client_value:
+            raise RuntimeError(
+                "Console Tailnet host and client must be configured together"
+            )
+        try:
+            host_address = ip_address(host_value)
+            client_address = ip_address(client_value)
+        except ValueError as error:
+            raise RuntimeError(
+                "Console Tailnet host and client must be literal IPv4 addresses"
+            ) from error
+        if (
+            host_address.version != 4
+            or client_address.version != 4
+            or host_address not in _TAILSCALE_IPV4_NETWORK
+            or client_address not in _TAILSCALE_IPV4_NETWORK
+        ):
+            raise RuntimeError(
+                "Console Tailnet host and client must be inside 100.64.0.0/10"
+            )
+        return str(host_address), str(client_address)
 
     @staticmethod
     def _load_ota_trusted_keys(path_value: str | None) -> tuple[tuple[str, Path], ...]:
@@ -81,6 +116,10 @@ class Settings:
         if require_api_token and api_token is None:
             raise RuntimeError("presence API token is required but unavailable")
         decoder_value = os.getenv("PRESENCE_COREDUMP_DECODER")
+        console_tailnet_host, console_tailnet_client = cls._load_console_tailnet_access(
+            os.getenv("PRESENCE_CONSOLE_TAILNET_HOST"),
+            os.getenv("PRESENCE_CONSOLE_TAILNET_CLIENT"),
+        )
         return cls(
             database_path=Path(
                 os.getenv("PRESENCE_DB_PATH", "data/presence.db")
@@ -96,4 +135,6 @@ class Settings:
             console_host=cls._load_console_host(
                 os.getenv("PRESENCE_CONSOLE_HOST", "192.168.0.46")
             ),
+            console_tailnet_host=console_tailnet_host,
+            console_tailnet_client=console_tailnet_client,
         )

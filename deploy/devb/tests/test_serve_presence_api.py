@@ -5,9 +5,24 @@ import unittest
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "serve_presence_api.py"
+SERVICE_PATH = Path(__file__).resolve().parents[1] / "m5-presence-api.service"
 
 
 class ServePresenceApiConfigurationTests(unittest.TestCase):
+    def test_production_console_tailnet_allowlist_is_exact(self) -> None:
+        environment = {}
+        for line in SERVICE_PATH.read_text(encoding="utf-8").splitlines():
+            if line.startswith('Environment="') and line.endswith('"'):
+                key, value = line[len('Environment="') : -1].split("=", 1)
+                environment[key] = value
+
+        self.assertEqual(
+            environment["PRESENCE_CONSOLE_TAILNET_HOST"], "100.117.242.46"
+        )
+        self.assertEqual(
+            environment["PRESENCE_CONSOLE_TAILNET_CLIENT"], "100.118.9.99"
+        )
+
     def test_listener_boundary_and_explicit_socket_wiring(self) -> None:
         tree = ast.parse(SCRIPT_PATH.read_text(encoding="utf-8"))
         getenv_defaults = {}

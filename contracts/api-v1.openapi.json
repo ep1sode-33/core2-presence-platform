@@ -1200,7 +1200,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           }
         }
       }
@@ -1259,7 +1259,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "404": {
             "description": "Device does not exist"
@@ -1317,7 +1317,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "409": {
             "description": "Stale configuration revision"
@@ -1377,7 +1377,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "422": {
             "description": "Validation Error",
@@ -1438,7 +1438,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "422": {
             "description": "Validation Error",
@@ -1491,7 +1491,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "422": {
             "description": "Validation Error",
@@ -1565,7 +1565,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "422": {
             "description": "Validation Error",
@@ -1623,7 +1623,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "422": {
             "description": "Validation Error",
@@ -1658,7 +1658,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           }
         }
       }
@@ -1689,7 +1689,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "400": {
             "description": "Bundle or signature verification failed"
@@ -1748,7 +1748,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "422": {
             "description": "Validation Error",
@@ -1801,7 +1801,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "404": {
             "description": "Verified release was not found"
@@ -1852,7 +1852,7 @@
             }
           },
           "403": {
-            "description": "Console is available only on the LAN"
+            "description": "Console is available only on trusted networks"
           },
           "422": {
             "description": "Validation Error",

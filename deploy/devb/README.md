@@ -59,15 +59,19 @@ curl --fail http://100.117.242.46:8081/v1/healthz
 
 All ordinary device-data endpoints require the bearer token. The Console shell,
 assets, bounded data endpoints, and its dedicated configuration-write endpoint
-do not use a token; they accept only a direct client address in
-`192.168.0.0/24` and return HTTP 403 to loopback, Tailscale, and every other
-source range. Forwarding headers are disabled, so they cannot widen that
-boundary. Console requests must also use the configured literal
-`PRESENCE_CONSOLE_HOST` (normally `192.168.0.46`); browser mutations require a
-matching same-origin `Origin` header. This prevents DNS rebinding from turning
-an allowed browser into a Console proxy. `/v1/healthz`, FastAPI's API schema,
-and documentation remain public on the two existing private listeners, but
-contain no credential or device telemetry.
+do not use a token. They accept a direct client address in `192.168.0.0/24`
+through `PRESENCE_CONSOLE_HOST` (normally `192.168.0.46`), plus the single
+literal client in `PRESENCE_CONSOLE_TAILNET_CLIENT` through
+`PRESENCE_CONSOLE_TAILNET_HOST`. Production pins those Tailnet values to the
+Mac at `100.118.9.99/32` and devb at `100.117.242.46`; the rest of
+`100.64.0.0/10` remains forbidden. Each source is paired with its own Host, and
+browser mutations require a matching same-origin `Origin` header. Forwarding
+headers are disabled and ignored, so they cannot widen the boundary. This
+prevents DNS rebinding or a forged `X-Forwarded-For` value from turning another
+client into a Console proxy. `/v1/healthz`, FastAPI's API schema, and
+documentation remain public on the two existing private listeners, but contain
+no credential or device telemetry. No proxy or Tailscale configuration is
+needed for this application-level allowlist.
 
 ## Schema v5 and OTA trust
 

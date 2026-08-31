@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from importlib.resources import files
-from ipaddress import ip_address, ip_network
+from ipaddress import IPv4Network, ip_address, ip_network
 from math import ceil
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -42,7 +42,7 @@ from .service import NotFoundError, PresenceService, utc_now_ms
 
 ONLINE_THRESHOLD_MS = 120_000
 MAX_EVENT_MARKERS = 2_000
-_CONSOLE_ALLOWED_NETWORKS = (ip_network("192.168.0.0/24"),)
+_CONSOLE_LAN_NETWORK = ip_network("192.168.0.0/24")
 _ASSET_MEDIA_TYPES = {
     "console.css": "text/css; charset=utf-8",
     "console.js": "text/javascript; charset=utf-8",
@@ -313,22 +313,58 @@ def _console_request_origin_is_allowed(request: Request, console_host: str) -> b
     )
 
 
-def require_console_lan(request: Request, console_host: str = "192.168.0.46") -> None:
-    """Keep the tokenless operator console on its exact trusted LAN origin."""
+def _console_access_rules(
+    console_host: str,
+    console_tailnet_host: str | None,
+    console_tailnet_client: str | None,
+) -> tuple[tuple[IPv4Network, str], ...]:
+    rules = [(_CONSOLE_LAN_NETWORK, console_host)]
+    if console_tailnet_host is not None and console_tailnet_client is not None:
+        try:
+            client_address = ip_address(console_tailnet_client)
+        except ValueError:
+            return tuple(rules)
+        if client_address.version == 4:
+            rules.append((ip_network(f"{client_address}/32"), console_tailnet_host))
+    return tuple(rules)
+
+
+def require_console_access(
+    request: Request,
+    console_host: str = "192.168.0.46",
+    console_tailnet_host: str | None = None,
+    console_tailnet_client: str | None = None,
+) -> None:
+    """Keep the tokenless operator console on an exact trusted origin."""
     if request.client is None:
-        raise HTTPException(status_code=403, detail="console is available only on LAN")
+        raise HTTPException(
+            status_code=403, detail="console is available only on trusted networks"
+        )
     try:
         client_address = ip_address(request.client.host)
     except ValueError as error:
         raise HTTPException(
-            status_code=403, detail="console is available only on LAN"
+            status_code=403, detail="console is available only on trusted networks"
         ) from error
-    if not any(client_address in network for network in _CONSOLE_ALLOWED_NETWORKS):
-        raise HTTPException(status_code=403, detail="console is available only on LAN")
+    allowed_hosts = tuple(
+        allowed_host
+        for network, allowed_host in _console_access_rules(
+            console_host, console_tailnet_host, console_tailnet_client
+        )
+        if client_address in network
+    )
+    if not allowed_hosts:
+        raise HTTPException(
+            status_code=403, detail="console is available only on trusted networks"
+        )
     # The peer address above remains the authorization boundary. This
-    # additional Host/Origin gate prevents a browser on the LAN from being
-    # driven through a DNS-rebinding origin into the tokenless Console.
-    if not _console_request_origin_is_allowed(request, console_host):
+    # additional Host/Origin gate prevents an allowed browser from being driven
+    # through a DNS-rebinding origin into the tokenless Console. Pairing each
+    # source range with its own host also rejects LAN/Tailnet origin crossover.
+    if not any(
+        _console_request_origin_is_allowed(request, allowed_host)
+        for allowed_host in allowed_hosts
+    ):
         raise HTTPException(status_code=403, detail="console origin is not allowed")
 
 
@@ -337,13 +373,19 @@ def create_console_router(
     service: PresenceService,
     operations: OperationsService,
     console_host: str = "192.168.0.46",
+    console_tailnet_host: str | None = None,
+    console_tailnet_client: str | None = None,
 ) -> APIRouter:
-    def require_configured_console_lan(request: Request) -> None:
-        require_console_lan(request, console_host)
+    def require_configured_console_access(request: Request) -> None:
+        require_console_access(
+            request, console_host, console_tailnet_host, console_tailnet_client
+        )
 
     router = APIRouter(
-        dependencies=[Depends(require_configured_console_lan)],
-        responses={403: {"description": "Console is available only on the LAN"}},
+        dependencies=[Depends(require_configured_console_access)],
+        responses={
+            403: {"description": "Console is available only on trusted networks"}
+        },
     )
 
     @router.get("/console", include_in_schema=False)

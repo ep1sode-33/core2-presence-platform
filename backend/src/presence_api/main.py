@@ -350,7 +350,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(
         create_console_router(
-            database, service, operations, active_settings.console_host
+            database,
+            service,
+            operations,
+            active_settings.console_host,
+            active_settings.console_tailnet_host,
+            active_settings.console_tailnet_client,
         )
     )
     return app

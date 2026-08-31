@@ -39,15 +39,16 @@ API can remain on port 8080.
 ## Presence Console
 
 Open `/console` on the same origin as the API, for example
-`http://192.168.0.46:8081/console`. It loads directly without a login or bearer
-token. The shell, assets, bounded data endpoints, and dedicated configuration
-write endpoint all reject clients outside `192.168.0.0/24` with HTTP 403. The
-server uses the direct socket peer address and ignores forwarding headers; no
-reverse proxy is part of this trust boundary. Consequently, every host on that
-LAN can read Console telemetry and issue a confirmed configuration revision.
-The Console also accepts only the configured literal `PRESENCE_CONSOLE_HOST`
-(default `192.168.0.46`) in the HTTP Host header, and state-changing browser
-requests need a matching same-origin Origin header. The ordinary
+`http://192.168.0.46:8081/console`, or from the configured Mac at
+`http://100.117.242.46:8081/console`. It loads directly without a login or
+bearer token. The shell, assets, bounded data endpoints, and dedicated
+configuration write endpoint accept clients in `192.168.0.0/24`, plus one
+exact Tailnet client configured by `PRESENCE_CONSOLE_TAILNET_CLIENT`; all other
+sources receive HTTP 403. The server uses the direct socket peer address and
+ignores forwarding headers; no reverse proxy is part of this trust boundary.
+The LAN and Tailnet sources must respectively use `PRESENCE_CONSOLE_HOST` and
+`PRESENCE_CONSOLE_TAILNET_HOST` in the HTTP Host header, and state-changing
+browser requests need a matching same-origin Origin header. The ordinary
 `/v1/devices/...` endpoints remain bearer-protected.
 
 The console's online indicator means the server received telemetry or a health
@@ -72,11 +73,12 @@ one-shot command at `/control/acks`, and reports OTA progress at
 requirement. Health history, commands, logs, release status, and dumps have
 per-device retention limits so the SQLite database remains bounded.
 
-Release import and selection are Console-only LAN operations. Configure the
-backend trust set with `PRESENCE_OTA_TRUST_KEYS_PATH`, pointing to a root-owned,
-mode-`0644` JSON object whose one or two entries map a signing key ID to a
-mode-`0644` P-256 public PEM file. Both contain public material; the service's
-systemd `DynamicUser` needs read access while only root may replace them. The
+Release import and selection are Console-only trusted-network operations.
+Configure the backend trust set with `PRESENCE_OTA_TRUST_KEYS_PATH`, pointing
+to a root-owned, mode-`0644` JSON object whose one or two entries map a signing
+key ID to a mode-`0644` P-256 public PEM file. Both contain public material;
+the service's systemd `DynamicUser` needs read access while only root may
+replace them. The
 bundle verifier accepts only the canonical archive and binary record
 produced by `tools/ota_release.py`; it never trusts key material supplied by the
 upload. A selected device downloads its bearer-protected manifest as the exact

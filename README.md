@@ -31,9 +31,12 @@ The same FastAPI service also serves a responsive operator console at
 presence/PIR/microphone timelines, calibration summaries, feedback markers,
 desired-versus-applied configuration state, and an explicitly confirmed
 configuration editor. The entire Console surface, including configuration
-writes, accepts only direct clients in `192.168.0.0/24` using the configured
-literal LAN Host; mutations also require an exact same-origin browser request.
-The existing device API under `/v1/devices/...` remains bearer-authenticated.
+writes, accepts direct clients in `192.168.0.0/24` through the configured LAN
+Host and the explicitly configured Mac at `100.118.9.99/32` through devb's
+Tailnet Host. Each source is paired with its own literal Host; mutations also
+require an exact same-origin browser request. Forwarded client headers are
+never trusted. The existing device API under `/v1/devices/...` remains
+bearer-authenticated.
 
 v0.7 also records bounded device-health history and explainable transition
 evidence, transports idempotent one-shot control commands, retains structured

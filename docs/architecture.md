@@ -140,7 +140,7 @@ the same semantic violations.
 `contracts/api-v1.openapi.json` is generated from the FastAPI application and
 versions the rest of the HTTP contract, including acknowledgement responses,
 feedback, configuration, bounded console snapshots, pagination envelopes,
-errors, bearer auth, and the Console's LAN-only routes.
+errors, bearer auth, and the Console's trusted-network routes.
 
 ## Time model
 
@@ -294,14 +294,16 @@ The first deployed device transport is plain HTTP to the explicitly bound
 `192.168.0.46:8081` trusted-LAN endpoint. The ordinary device API requires a
 bearer token, but HTTP does not encrypt credentials or telemetry. The Web
 Console deliberately uses a different boundary: its shell, data reads, and
-confirmed configuration writes require the direct socket peer to be in
-`192.168.0.0/24`, never trusts forwarding headers, and accepts only the
-configured literal LAN Host. Browser mutations additionally require an exact
-same-origin Origin header, closing the DNS-rebinding path. Every host on that
-LAN is therefore a Console administrator. The service must not be exposed to
-an untrusted LAN or public interface. HTTPS is not accepted by provisioning
-until the firmware has a real certificate trust configuration; it never falls
-back to an insecure TLS client.
+confirmed configuration writes require the direct socket peer to be either in
+`192.168.0.0/24` or the explicitly configured Mac Tailnet `/32`, and never
+trust forwarding headers. The LAN source is accepted only through its literal
+LAN Host; the Mac `/32` is accepted only through devb's literal Tailnet Host.
+Browser mutations additionally require an exact same-origin Origin header,
+closing the DNS-rebinding path. Every host on that LAN and the one configured
+Tailnet device are therefore Console administrators. The service must not be
+exposed to an untrusted LAN or public interface. HTTPS is not accepted by
+provisioning until the firmware has a real certificate trust configuration; it
+never falls back to an insecure TLS client.
 
 The two display feeds are credential-free GETs and never receive the presence
 Bearer token. The LAN environment feed and first Open-Meteo integration also

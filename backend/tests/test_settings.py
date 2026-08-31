@@ -14,6 +14,8 @@ def clear_token_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PRESENCE_OTA_TRUST_KEYS_PATH", raising=False)
     monkeypatch.delenv("PRESENCE_COREDUMP_DECODER", raising=False)
     monkeypatch.delenv("PRESENCE_CONSOLE_HOST", raising=False)
+    monkeypatch.delenv("PRESENCE_CONSOLE_TAILNET_HOST", raising=False)
+    monkeypatch.delenv("PRESENCE_CONSOLE_TAILNET_CLIENT", raising=False)
 
 
 def test_required_token_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,6 +75,45 @@ def test_console_host_must_be_a_literal_home_lan_address(
 
     monkeypatch.setenv("PRESENCE_CONSOLE_HOST", "100.117.242.46")
     with pytest.raises(RuntimeError, match="inside 192.168.0.0/24"):
+        Settings.from_environment()
+
+
+def test_console_tailnet_host_and_exact_client_load_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clear_token_environment(monkeypatch)
+    monkeypatch.setenv("PRESENCE_CONSOLE_TAILNET_HOST", "100.117.242.46")
+    monkeypatch.setenv("PRESENCE_CONSOLE_TAILNET_CLIENT", "100.118.9.99")
+
+    settings = Settings.from_environment()
+
+    assert settings.console_tailnet_host == "100.117.242.46"
+    assert settings.console_tailnet_client == "100.118.9.99"
+
+
+def test_console_tailnet_access_requires_a_complete_exact_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clear_token_environment(monkeypatch)
+    monkeypatch.setenv("PRESENCE_CONSOLE_TAILNET_HOST", "100.117.242.46")
+    with pytest.raises(RuntimeError, match="configured together"):
+        Settings.from_environment()
+
+    monkeypatch.setenv("PRESENCE_CONSOLE_TAILNET_CLIENT", "100.64.0.0/10")
+    with pytest.raises(RuntimeError, match="literal IPv4"):
+        Settings.from_environment()
+
+    monkeypatch.setenv("PRESENCE_CONSOLE_TAILNET_CLIENT", "192.168.0.42")
+    with pytest.raises(RuntimeError, match="inside 100.64.0.0/10"):
+        Settings.from_environment()
+
+    monkeypatch.delenv("PRESENCE_CONSOLE_TAILNET_HOST")
+    monkeypatch.setenv("PRESENCE_CONSOLE_TAILNET_CLIENT", "100.118.9.99")
+    with pytest.raises(RuntimeError, match="configured together"):
+        Settings.from_environment()
+
+    monkeypatch.setenv("PRESENCE_CONSOLE_TAILNET_HOST", "192.168.0.46")
+    with pytest.raises(RuntimeError, match="inside 100.64.0.0/10"):
         Settings.from_environment()
 
 
