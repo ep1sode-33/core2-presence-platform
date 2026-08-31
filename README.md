@@ -71,13 +71,17 @@ perform Wi-Fi, HTTP, NVS, or flash I/O.
 Authenticated control, health, log, and bounded-payload operations share one
 serialized HTTP/1.1 keep-alive session. Buffered telemetry uses a second
 dedicated persistent HTTP/1.1 session; each batch contains up to thirty records
-and has a defensive 14 KiB serialized-size ceiling. The worker allocates the
-exact immutable file size, reads the complete body, closes LittleFS, and only
-then writes the request. A normal request failure, non-success HTTP response,
-or partially consumed response discards the affected connection; negative
-transport failures also feed a cooldown-limited path recovery policy. Station
-modem sleep is disabled to avoid long lwIP send stalls, and backlog drain is not
-capped below the configured sampling rate.
+and has a defensive 14 KiB serialized-size ceiling. The worker's bounded
+request, response, and OTA buffers reuse one static 14 KiB scratch area; it
+reads the complete immutable telemetry body there, closes LittleFS, and only
+then writes the request without transient body or stream-buffer heap
+allocations. Telemetry writes use 512-byte socket sends under a 1.5-second
+no-progress and five-second absolute deadline shared by the request header and
+body. A normal request failure, non-success HTTP response, or partially
+consumed response discards the affected connection; negative transport
+failures also feed a cooldown-limited path recovery policy. Station modem sleep
+is disabled to avoid long lwIP send stalls, and backlog drain is not capped
+below the configured sampling rate.
 
 Wi-Fi, backend URL, and bearer token are provisioned over USB and stored in a
 two-slot NVS record so a reset during an update leaves the previous valid

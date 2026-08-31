@@ -109,6 +109,10 @@ firmware-unit:
 		src/backend_transport_recovery.cpp \
 		-o $(NATIVE_BUILD)/backend_transport_recovery_test
 	$(NATIVE_BUILD)/backend_transport_recovery_test
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Isrc \
+		test/native/test_telemetry_write_deadline.cpp \
+		-o $(NATIVE_BUILD)/telemetry_write_deadline_test
+	$(NATIVE_BUILD)/telemetry_write_deadline_test
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -pthread -Isrc \
 		test/native/test_health_snapshot.cpp src/health_snapshot.cpp \
 		src/health_json.cpp \

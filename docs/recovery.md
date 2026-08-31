@@ -35,8 +35,11 @@ Do not erase flash or reprovision a device whose settings still validate. Once
 the API is reachable again, the uploader discards any incomplete telemetry
 connection, uses bounded backoff, opens a clean dedicated keep-alive session,
 and resumes the exact immutable LittleFS envelopes without disturbing its
-separate control/health/log session. Confirm new telemetry acknowledgements and
-a falling spool count before attempting any stronger recovery.
+separate control/health/log session. Each socket write is bounded by a
+request-wide deadline; `EVENT,uploader,telemetry_write_failed` records the
+batch ID, failure kind, errno, written request bytes, and envelope size. Confirm
+new telemetry acknowledgements and a falling spool count before attempting any
+stronger recovery.
 
 ## Backend restart or path outage
 

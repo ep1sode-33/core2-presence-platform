@@ -11,9 +11,8 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstddef>
 #include <cstring>
-#include <memory>
-#include <new>
 #include <sys/time.h>
 
 #include "backlog_policy.h"
@@ -26,6 +25,7 @@
 #include "core_dump_json.h"
 #include "core_dump_upload.h"
 #include "dashboard_time.h"
+#include "deadline_wifi_client.h"
 #include "device_config_storage.h"
 #include "feedback_bundle.h"
 #include "feedback_protocol.h"
@@ -81,6 +81,8 @@ constexpr uint64_t kEnvironmentRetryMs = 30 * 1000;
 constexpr uint64_t kWeatherRetryMs = 60 * 1000;
 constexpr uint64_t kMaximumDashboardDeferralMs = 30 * 1000;
 constexpr size_t kMaximumAckBytes = 2048;
+constexpr uint64_t kAckBodyInactivityTimeoutMs = 5000;
+constexpr size_t kMaximumHealthPayloadBytes = 4096;
 constexpr size_t kMaximumConfigResponseBytes = 2048;
 constexpr size_t kMaximumEnvironmentResponseBytes = 1024;
 constexpr size_t kMaximumWeatherResponseBytes = 4096;
@@ -88,9 +90,6 @@ constexpr size_t kMaximumControlResponseBytes = 8192;
 constexpr size_t kMaximumOperationalLogPayloadBytes = 8192;
 constexpr size_t kMaximumCommandAckPayloadBytes = 1024;
 constexpr size_t kMaximumReleaseStatusPayloadBytes = 2048;
-constexpr size_t kTelemetryUploadWriteChunkBytes = 512;
-static_assert(kTelemetryUploadWriteChunkBytes > 0 &&
-              kTelemetryUploadWriteChunkBytes <= HTTP_TCP_BUFFER_SIZE);
 constexpr size_t kMaximumManifestBundleBytes =
     kOtaManifestMaximumSize + kOtaP256SignatureSize;
 constexpr size_t kOperationalLogBatchSize = 24;
@@ -110,17 +109,30 @@ OperationalLogRing* workerOperationalLog = nullptr;
 OtaRuntimeMailbox* workerOtaRuntimeMailbox = nullptr;
 TaskHandle_t workerTaskHandle = nullptr;
 
-// Both dashboard sources are fetched serially by the sole uploader worker, so
-// they can safely share one fixed response buffer without consuming task stack
-// or fragmenting the heap. The extra byte is reserved for the parser's NUL.
-char dashboardResponseBytes[kMaximumWeatherResponseBytes + 1] = {};
-uint8_t healthPayloadBytes[4096] = {};
-uint8_t controlResponseBytes[kMaximumControlResponseBytes + 1] = {};
-uint8_t commandAckPayloadBytes[kMaximumCommandAckPayloadBytes] = {};
-uint8_t operationalLogPayloadBytes[kMaximumOperationalLogPayloadBytes] = {};
-uint8_t releaseStatusPayloadBytes[kMaximumReleaseStatusPayloadBytes] = {};
-uint8_t manifestBundleBytes[kMaximumManifestBundleBytes] = {};
-uint8_t otaImageChunk[kOtaMaximumWriteChunkSize] = {};
+// Every network operation runs serially on the sole uploader worker. Reuse one
+// byte-addressable static scratch area for request/response bodies, OTA chunks,
+// and the immutable telemetry envelope. This replaces eight smaller globals
+// and avoids heap allocation and fragmentation on the classic ESP32. The extra
+// byte is reserved for parsers that need a trailing NUL.
+alignas(std::max_align_t) uint8_t
+    uploaderScratchBytes[kTelemetryUploadMaximumPayloadBytes + 1] = {};
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kMaximumWeatherResponseBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >= kMaximumAckBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kMaximumHealthPayloadBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kMaximumControlResponseBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kMaximumCommandAckPayloadBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kMaximumOperationalLogPayloadBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kMaximumReleaseStatusPayloadBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kMaximumManifestBundleBytes);
+static_assert(kTelemetryUploadMaximumPayloadBytes >=
+              kOtaMaximumWriteChunkSize);
 
 enum class FeedbackBundleLoadResult : uint8_t {
   kOk,
@@ -238,66 +250,6 @@ class WatchdogFeedingStream final : public Stream {
 
  private:
   Stream& source_;
-};
-
-// Keep LittleFS closed for the entire network request while preserving a
-// watchdog feed point between bounded socket writes. Arduino-ESP32 2.0.17 can
-// spend roughly ten seconds retrying one WiFiClient::write after EAGAIN, so a
-// whole-envelope byte write could consume the complete 30-second uploader
-// watchdog budget before the recovery policy sees its transport error.
-class WatchdogFeedingMemoryReadStream final : public Stream {
- public:
-  WatchdogFeedingMemoryReadStream(const uint8_t* bytes, size_t size)
-      : bytes_(bytes), size_(size) {}
-
-  int available() override {
-    feedUploaderTaskWatchdog();
-    if (failed_ || offset_ > size_) {
-      return -1;
-    }
-    const size_t remaining = size_ - offset_;
-    return static_cast<int>(
-        std::min(remaining, kTelemetryUploadWriteChunkBytes));
-  }
-
-  int read() override {
-    uint8_t value = 0;
-    return readBytes(&value, 1) == 1 ? value : -1;
-  }
-
-  int peek() override {
-    if (failed_ || bytes_ == nullptr || offset_ >= size_) {
-      return -1;
-    }
-    return bytes_[offset_];
-  }
-
-  size_t readBytes(uint8_t* output, size_t length) override {
-    feedUploaderTaskWatchdog();
-    if (length == 0) {
-      return 0;
-    }
-    if (failed_ || bytes_ == nullptr || output == nullptr || offset_ > size_) {
-      failed_ = true;
-      return 0;
-    }
-    const size_t read =
-        std::min({length, size_ - offset_, kTelemetryUploadWriteChunkBytes});
-    std::memcpy(output, bytes_ + offset_, read);
-    offset_ += read;
-    feedUploaderTaskWatchdog();
-    return read;
-  }
-
-  size_t write(uint8_t) override { return 0; }
-
-  bool complete() const { return !failed_ && offset_ == size_; }
-
- private:
-  const uint8_t* bytes_ = nullptr;
-  size_t size_ = 0;
-  size_t offset_ = 0;
-  bool failed_ = false;
 };
 
 class UploaderWorker {
@@ -1003,8 +955,8 @@ class UploaderWorker {
       return;
     }
 
-    FixedBufferSink payload{commandAckPayloadBytes,
-                            sizeof(commandAckPayloadBytes), 0};
+    FixedBufferSink payload{uploaderScratchBytes,
+                            kMaximumCommandAckPayloadBytes, 0};
     const CommandAckJsonSink sink{&payload, bufferSink};
     if (!writeCommandAckJson(commandJournal_.record(), sink)) {
       controlOperatorHalted_ = true;
@@ -1028,7 +980,7 @@ class UploaderWorker {
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
-    const int status = http.sendRequest("POST", commandAckPayloadBytes,
+    const int status = http.sendRequest("POST", uploaderScratchBytes,
                                         payload.size);
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
@@ -1167,7 +1119,7 @@ class UploaderWorker {
     }
     size_t responseSize = 0;
     const bool bodyOk = readHttpBodyToBuffer(
-        http, controlResponseBytes, kMaximumControlResponseBytes,
+        http, uploaderScratchBytes, kMaximumControlResponseBytes,
         &responseSize);
     endBackendRequest(bodyOk, status);
     if (!bodyOk) {
@@ -1175,9 +1127,9 @@ class UploaderWorker {
       Serial.println("EVENT,control,poll_bad_body");
       return;
     }
-    controlResponseBytes[responseSize] = '\0';
+    uploaderScratchBytes[responseSize] = '\0';
     const ControlPollParseResult parsed = parseControlPollResponse(
-        reinterpret_cast<const char*>(controlResponseBytes), responseSize);
+        reinterpret_cast<const char*>(uploaderScratchBytes), responseSize);
     if (!parsed.ok()) {
       scheduleControlRetry(now);
       otaRuntimeError_ = OtaRuntimeError::kControlProtocol;
@@ -1253,8 +1205,8 @@ class UploaderWorker {
       scheduleOperationalLogRetry(now);
       return;
     }
-    FixedBufferSink payload{operationalLogPayloadBytes,
-                            sizeof(operationalLogPayloadBytes), 0};
+    FixedBufferSink payload{uploaderScratchBytes,
+                            kMaximumOperationalLogPayloadBytes, 0};
     const OperationalLogBatchContext context{batchId, workerIdentity.bootId,
                                              kM5goBuildId};
     const OperationalLogJsonSink sink{&payload, bufferSink};
@@ -1280,7 +1232,7 @@ class UploaderWorker {
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
-    const int status = http.sendRequest("POST", operationalLogPayloadBytes,
+    const int status = http.sendRequest("POST", uploaderScratchBytes,
                                         payload.size);
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
@@ -2076,8 +2028,8 @@ class UploaderWorker {
     std::snprintf(statusId, sizeof(statusId), "status-%016llx",
                   static_cast<unsigned long long>(hash));
     const int payloadLength = std::snprintf(
-        reinterpret_cast<char*>(releaseStatusPayloadBytes),
-        sizeof(releaseStatusPayloadBytes),
+        reinterpret_cast<char*>(uploaderScratchBytes),
+        kMaximumReleaseStatusPayloadBytes,
         "{\"schema_version\":1,\"status_id\":\"%s\","
         "\"desired_release_id\":%s,\"running_release_id\":%s,"
         "\"previous_release_id\":%s,\"last_known_good_release_id\":%s,"
@@ -2088,7 +2040,8 @@ class UploaderWorker {
         releaseReportPhaseName(phase), progress, error,
         rollbackOutcomeName(phase), kM5goFirmwareVersion, kM5goBuildId);
     if (payloadLength <= 0 ||
-        static_cast<size_t>(payloadLength) >= sizeof(releaseStatusPayloadBytes)) {
+        static_cast<size_t>(payloadLength) >=
+            kMaximumReleaseStatusPayloadBytes) {
       return false;
     }
 
@@ -2109,7 +2062,7 @@ class UploaderWorker {
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
     const int status = http.sendRequest(
-        "POST", releaseStatusPayloadBytes, static_cast<size_t>(payloadLength));
+        "POST", uploaderScratchBytes, static_cast<size_t>(payloadLength));
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
@@ -2235,12 +2188,12 @@ class UploaderWorker {
         const size_t remaining = updater.imageSize() - updater.bytesWritten();
         const size_t requested = otaSectorBoundedChunkSize(
             updater.bytesWritten(), static_cast<size_t>(available), remaining);
-        const int read = stream->read(otaImageChunk, requested);
+        const int read = stream->read(uploaderScratchBytes, requested);
         if (read <= 0) {
           endBackendRequest(false, HTTPC_ERROR_CONNECTION_LOST);
           return false;
         }
-        if (!updater.write(otaImageChunk, static_cast<size_t>(read))) {
+        if (!updater.write(uploaderScratchBytes, static_cast<size_t>(read))) {
           // The HTTP stream is still healthy; this is a local flash/update
           // failure and must not feed the Wi-Fi circuit breaker.
           endBackendRequest(false, status);
@@ -2372,8 +2325,8 @@ class UploaderWorker {
 
     size_t manifestBundleSize = 0;
     if (!downloadAuthenticatedBinary(
-            desired.manifestUrl, manifestBundleBytes,
-            sizeof(manifestBundleBytes), &manifestBundleSize) ||
+            desired.manifestUrl, uploaderScratchBytes,
+            kMaximumManifestBundleBytes, &manifestBundleSize) ||
         manifestBundleSize <= kOtaP256SignatureSize) {
       failProductionRelease(desired, "manifest_download_failed",
                             OtaRuntimeError::kNetwork, false, false);
@@ -2391,8 +2344,8 @@ class UploaderWorker {
     const uint32_t partitionAddress =
         otaInactiveApplicationPartitionAddress();
     const OtaReleaseValidationResult validated = validateOtaRelease(
-        manifestBundleBytes, manifestSize,
-        manifestBundleBytes + manifestSize, kOtaP256SignatureSize,
+        uploaderScratchBytes, manifestSize,
+        uploaderScratchBytes + manifestSize, kOtaP256SignatureSize,
         kCompiledOtaTrustKeys, kCompiledOtaTrustKeyCount,
         "m5go-classic-esp32-16m", installState_.confirmedReleaseCounter,
         partitionSize);
@@ -2627,7 +2580,8 @@ class UploaderWorker {
     }
 
     snapshot.sequence = nextHealthSequence_++;
-    FixedBufferSink payload{healthPayloadBytes, sizeof(healthPayloadBytes), 0};
+    FixedBufferSink payload{uploaderScratchBytes,
+                            kMaximumHealthPayloadBytes, 0};
     const HealthJsonSink sink{&payload, bufferSink};
     if (!writeDeviceHealthJson(snapshot, sink)) {
       nextHealthAttemptMs_ = now + kHealthRetryMs;
@@ -2654,7 +2608,7 @@ class UploaderWorker {
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
-    const int status = http.sendRequest("POST", healthPayloadBytes,
+    const int status = http.sendRequest("POST", uploaderScratchBytes,
                                         payload.size);
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
@@ -2714,7 +2668,7 @@ class UploaderWorker {
       return response;
     }
 
-    dashboardResponseBytes[0] = '\0';
+    uploaderScratchBytes[0] = '\0';
     WiFiClient client;
     HTTPClient http;
     http.setConnectTimeout(3000);
@@ -2743,7 +2697,7 @@ class UploaderWorker {
     }
 
     FixedCapacityStream sink(
-        reinterpret_cast<uint8_t*>(dashboardResponseBytes), bodyCapacity);
+        uploaderScratchBytes, bodyCapacity);
     response.transferResult = http.writeToStream(&sink);
     const int completedSize = http.getSize();
     http.end();
@@ -2763,7 +2717,7 @@ class UploaderWorker {
       return response;
     }
 
-    dashboardResponseBytes[response.bodySize] = '\0';
+    uploaderScratchBytes[response.bodySize] = '\0';
     response.result = DashboardFetchResult::kOk;
     return response;
   }
@@ -2799,7 +2753,8 @@ class UploaderWorker {
     }
 
     const EnvironmentParseResult parsed = parseEnvironmentReading(
-        dashboardResponseBytes, response.bodySize);
+        reinterpret_cast<const char*>(uploaderScratchBytes),
+        response.bodySize);
     if (!parsed.ok()) {
       workerDashboardMailbox->recordEnvironmentFailure(attemptMs);
       nextEnvironmentFetchMs_ = completedMs + kEnvironmentRetryMs;
@@ -2840,7 +2795,8 @@ class UploaderWorker {
     }
 
     const WeatherParseResult parsed =
-        parseWeatherReading(dashboardResponseBytes, response.bodySize);
+        parseWeatherReading(reinterpret_cast<const char*>(uploaderScratchBytes),
+                            response.bodySize);
     if (!parsed.ok()) {
       workerDashboardMailbox->recordWeatherFailure(attemptMs);
       nextWeatherFetchMs_ = completedMs + kWeatherRetryMs;
@@ -3697,6 +3653,51 @@ class UploaderWorker {
            response.length() <= kMaximumAckBytes;
   }
 
+  static bool readExactAckBodyToBuffer(HTTPClient& http, uint8_t* output,
+                                       size_t capacity,
+                                       size_t* outputSize) {
+    if (output == nullptr || outputSize == nullptr || capacity == 0) {
+      return false;
+    }
+    const int declaredSize = http.getSize();
+    if (declaredSize < 0 || declaredSize > static_cast<int>(capacity)) {
+      return false;
+    }
+    const size_t expected = static_cast<size_t>(declaredSize);
+    *outputSize = 0;
+    if (expected == 0) {
+      return true;
+    }
+    WiFiClient* stream = http.getStreamPtr();
+    if (stream == nullptr) {
+      return false;
+    }
+
+    uint64_t lastProgressMs = monotonicMillis();
+    while (*outputSize < expected) {
+      feedUploaderTaskWatchdog();
+      const int available = stream->available();
+      if (available > 0) {
+        const size_t requested =
+            std::min(expected - *outputSize, static_cast<size_t>(available));
+        const int read = stream->read(output + *outputSize, requested);
+        if (read <= 0 || static_cast<size_t>(read) > requested) {
+          return false;
+        }
+        *outputSize += static_cast<size_t>(read);
+        lastProgressMs = monotonicMillis();
+        continue;
+      }
+      const uint64_t currentMs = monotonicMillis();
+      if (!http.connected() ||
+          currentMs - lastProgressMs >= kAckBodyInactivityTimeoutMs) {
+        return false;
+      }
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return true;
+  }
+
   void noteDesiredConfigRevision(uint64_t now, uint64_t desiredRevision) {
     desiredConfigRevision_ =
         std::max<uint64_t>(desiredConfigRevision_, desiredRevision);
@@ -3798,22 +3799,12 @@ class UploaderWorker {
       return true;
     }
 
-    // Keep the upload buffer off the 16 KiB uploader stack and allocate only
-    // the immutable envelope's exact bounded size. Read and close LittleFS
-    // before opening the HTTP request so flash I/O cannot interleave with the
-    // ESP32 TCP write path. The buffer is released immediately after send.
-    std::unique_ptr<uint8_t[]> payload(
-        new (std::nothrow) uint8_t[envelopeSize]);
-    if (!payload) {
-      envelope.close();
-      Serial.printf("EVENT,uploader,payload_alloc_failed,%s,%u\n",
-                    metadata.batchId,
-                    static_cast<unsigned>(envelopeSize));
-      scheduleBackoff(now);
-      return true;
-    }
+    // Read the immutable envelope into the worker's static scratch area and
+    // close LittleFS before network I/O. This avoids both heap fragmentation
+    // and flash activity interleaving with the ESP32 TCP write path.
     feedWatchdog();
-    const size_t payloadBytesRead = envelope.read(payload.get(), envelopeSize);
+    const size_t payloadBytesRead =
+        envelope.read(uploaderScratchBytes, envelopeSize);
     envelope.close();
     feedWatchdog();
     if (payloadBytesRead != envelopeSize) {
@@ -3837,9 +3828,11 @@ class UploaderWorker {
       return true;
     }
 
-    // The bounded RAM payload uses a dedicated keep-alive session. This keeps
-    // normal request failures isolated while preserving unrestricted backlog
-    // drain; negative transport errors still feed path-level Wi-Fi recovery.
+    // The bounded static payload uses a dedicated keep-alive session. This
+    // keeps normal request failures isolated while preserving unrestricted
+    // backlog drain; negative transport errors still feed path-level Wi-Fi
+    // recovery. One request-wide socket deadline covers headers and payload,
+    // while 512-byte raw sends yield and feed the uploader watchdog.
     if (!beginTelemetryRequest(url, 5000)) {
       scheduleBackoff(now);
       return true;
@@ -3849,14 +3842,27 @@ class UploaderWorker {
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
     feedWatchdog();
-    WatchdogFeedingMemoryReadStream body(payload.get(), envelopeSize);
-    const int status = http.sendRequest("POST", &body, envelopeSize);
+    telemetryClient_.beginBoundedWrite();
+    const int status =
+        http.sendRequest("POST", uploaderScratchBytes, envelopeSize);
+    const DeadlineWiFiClientFailure writeFailure =
+        telemetryClient_.boundedWriteFailure();
+    const int writeErrno = telemetryClient_.boundedWriteErrno();
+    const size_t requestBytesWritten = telemetryClient_.boundedBytesWritten();
+    telemetryClient_.endBoundedWrite();
     feedWatchdog();
-    payload.reset();
+    if (writeFailure != DeadlineWiFiClientFailure::kNone) {
+      Serial.printf(
+          "EVENT,uploader,telemetry_write_failed,%s,%s,%d,%u,%u\n",
+          metadata.batchId, deadlineWiFiClientFailureName(writeFailure),
+          writeErrno, static_cast<unsigned>(requestBytesWritten),
+          static_cast<unsigned>(envelopeSize));
+    }
 
-    if (status == HTTP_CODE_OK && body.complete()) {
-      String response;
-      if (!readExactAckBody(http, response)) {
+    if (status == HTTP_CODE_OK) {
+      size_t responseSize = 0;
+      if (!readExactAckBodyToBuffer(http, uploaderScratchBytes,
+                                    kMaximumAckBytes, &responseSize)) {
         endTelemetryRequest(false, status);
         Serial.printf("EVENT,uploader,retry_bad_ack,%s,bounded_read\n",
                       metadata.batchId);
@@ -3865,7 +3871,8 @@ class UploaderWorker {
       }
       endTelemetryRequest(true, status);
       const IngestAckParseResult parsed = parseIngestAck(
-          response.c_str(), response.length(), metadata.batchId,
+          reinterpret_cast<const char*>(uploaderScratchBytes), responseSize,
+          metadata.batchId,
           std::strlen(metadata.batchId), metadata.recordCount,
           metadata.maxSeq);
       if (!parsed.ok()) {
@@ -4244,7 +4251,7 @@ class UploaderWorker {
   OtaInstallState installState_ = {};
   PendingCoreDump pendingCoreDump_;
   OtaSafetyAbortRequest lastSafetyMetrics_ = {};
-  WiFiClient telemetryClient_;
+  DeadlineWiFiClient telemetryClient_;
   HTTPClient telemetryHttp_;
   WiFiClient backendClient_;
   HTTPClient backendHttp_;

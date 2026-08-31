@@ -43,14 +43,17 @@ publish immediately. A lower-priority worker batches records and uploads them.
 Authenticated control, health, log, and bounded-payload operations share that
 worker's serialized HTTP/1.1 keep-alive session. Buffered telemetry has a second
 dedicated persistent HTTP/1.1 session, and each request contains up to thirty
-records under a defensive 14 KiB ceiling. The exact-sized body is copied into
-temporary heap RAM and LittleFS is closed before the request begins, so flash
-and TCP progress do not hold one another's resources or wedge the control
-transport. Successful responses are completely consumed before reuse; normal
-request failure, non-success HTTP response, or partial response closes the
-affected session, then retries the immutable envelope on a clean socket. This
-preserves full configured backlog throughput without churning a new TCP
-connection per request.
+records under a defensive 14 KiB ceiling. A single static 14 KiB worker scratch
+area is shared serially across telemetry and the smaller uploader operations,
+eliminating transient body allocation and heap fragmentation. LittleFS is
+closed before the request begins, so flash and TCP progress do not hold one
+another's resources or wedge the control transport. Telemetry header and body
+writes share one bounded socket window with 512-byte sends, a 1.5-second
+no-progress timeout, and a five-second absolute timeout. Successful responses
+are completely consumed before reuse; normal request failure, non-success HTTP
+response, or partial response closes the affected session, then retries the
+immutable envelope on a clean socket. This preserves full configured backlog
+throughput without churning a new TCP connection per request.
 
 Microphone electrical/timing health is also hysteretic: 60 consecutive bad
 sample windows (about one second) are required to enter `degraded`; eight
