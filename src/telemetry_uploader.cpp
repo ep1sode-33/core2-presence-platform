@@ -476,9 +476,9 @@ class UploaderWorker {
 
   bool beginBackendRequest(const char* url, uint16_t timeoutMs) {
     // The control endpoint is polled every five seconds. Opening a fresh
-    // HTTP/1.0 connection for every control/log/health/telemetry operation can
-    // fill the ESP32's small TCP PCB pool with TIME_WAIT sockets. Keep one
-    // serialized HTTP/1.1 connection for the authenticated backend instead.
+    // HTTP/1.0 connection for every control/log/health operation can fill the
+    // ESP32's small TCP PCB pool with TIME_WAIT sockets. Keep one serialized
+    // HTTP/1.1 connection for bounded authenticated backend operations.
     backendHttp_.setConnectTimeout(3000);
     backendHttp_.setTimeout(timeoutMs);
     backendHttp_.useHTTP10(false);
@@ -494,7 +494,32 @@ class UploaderWorker {
     return false;
   }
 
+  bool beginTelemetryRequest(const char* url, uint16_t timeoutMs) {
+    // Streamed LittleFS bodies use their own persistent connection so a send
+    // stall cannot contaminate the bounded control/health/log transport. This
+    // session is serialized by the same worker and reuses only its own socket.
+    telemetryHttp_.setConnectTimeout(3000);
+    telemetryHttp_.setTimeout(timeoutMs);
+    telemetryHttp_.useHTTP10(false);
+    // useHTTP10(false) currently enables reuse as a side effect; keep this
+    // explicit and ordered afterwards so the intended lifecycle is stable.
+    telemetryHttp_.setReuse(true);
+    if (telemetryHttp_.begin(telemetryClient_, url)) {
+      return true;
+    }
+    telemetryHttp_.setReuse(false);
+    telemetryHttp_.end();
+    telemetryClient_.stop();
+    return false;
+  }
+
   void recycleBackendTransport(int status, uint8_t failureCount) {
+    // A confirmed path-level failure invalidates both independent sessions.
+    // The ordinary telemetry retry path closes only telemetryClient_ and does
+    // not call this global Wi-Fi recovery routine.
+    telemetryHttp_.setReuse(false);
+    telemetryHttp_.end();
+    telemetryClient_.stop();
     backendHttp_.setReuse(false);
     backendHttp_.end();
     backendClient_.stop();
@@ -534,6 +559,26 @@ class UploaderWorker {
         backendTransportRecovery_.recordFailure(monotonicMillis(), status);
     if (decision.shouldRecycle) {
       recycleBackendTransport(status, decision.failureCount);
+    }
+  }
+
+  void endTelemetryRequest(bool responseFullyConsumed,
+                           int status = HTTP_CODE_OK) {
+    if (!responseFullyConsumed) {
+      // Retry the immutable envelope on a clean telemetry socket without
+      // disturbing the separate bounded-operation connection.
+      telemetryHttp_.setReuse(false);
+    }
+    telemetryHttp_.end();
+    if (!responseFullyConsumed) {
+      telemetryClient_.stop();
+    }
+    // Any complete response, or even a received HTTP status whose body we
+    // reject, proves that the backend TCP path is alive and clears stale
+    // shared-session failure history. A negative telemetry transport error is
+    // isolated here; shared operations retain responsibility for Wi-Fi recycle.
+    if (responseFullyConsumed || status >= HTTP_CODE_CONTINUE) {
+      backendTransportRecovery_.recordSuccess();
     }
   }
 
@@ -3730,11 +3775,14 @@ class UploaderWorker {
       return true;
     }
 
-    if (!beginBackendRequest(url, 5000)) {
+    // Unlike the bounded RAM requests above, this request alternates LittleFS
+    // reads with socket writes. Its dedicated keep-alive session isolates a
+    // transient lwIP send stall without imposing a fixed backlog drain rate.
+    if (!beginTelemetryRequest(url, 5000)) {
       scheduleBackoff(now);
       return true;
     }
-    HTTPClient& http = backendHttp_;
+    HTTPClient& http = telemetryHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -3744,13 +3792,13 @@ class UploaderWorker {
     if (status == HTTP_CODE_OK && body.complete()) {
       String response;
       if (!readExactAckBody(http, response)) {
-        endBackendRequest(false, status);
+        endTelemetryRequest(false, status);
         Serial.printf("EVENT,uploader,retry_bad_ack,%s,bounded_read\n",
                       metadata.batchId);
         scheduleBackoff(now);
         return true;
       }
-      endBackendRequest(true, status);
+      endTelemetryRequest(true, status);
       const IngestAckParseResult parsed = parseIngestAck(
           response.c_str(), response.length(), metadata.batchId,
           std::strlen(metadata.batchId), metadata.recordCount,
@@ -3780,7 +3828,7 @@ class UploaderWorker {
       return true;
     }
 
-    endBackendRequest(false, status);
+    endTelemetryRequest(false, status);
     if (status == HTTP_CODE_UNAUTHORIZED || status == HTTP_CODE_NOT_FOUND) {
       Serial.printf("EVENT,uploader,operator_halt,%d,%s\n", status,
                     metadata.batchId);
@@ -4131,6 +4179,8 @@ class UploaderWorker {
   OtaInstallState installState_ = {};
   PendingCoreDump pendingCoreDump_;
   OtaSafetyAbortRequest lastSafetyMetrics_ = {};
+  WiFiClient telemetryClient_;
+  HTTPClient telemetryHttp_;
   WiFiClient backendClient_;
   HTTPClient backendHttp_;
   BackendTransportRecoveryPolicy backendTransportRecovery_;

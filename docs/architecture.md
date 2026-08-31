@@ -40,14 +40,16 @@ not upstream observation timestamps.
 The hardware loop never performs network or flash I/O. Once per second it
 publishes an immutable aggregate sample to a bounded queue; state transitions
 publish immediately. A lower-priority worker batches records and uploads them.
-All authenticated port-8081 operations share that worker's single serialized
-HTTP/1.1 keep-alive session. Successful responses are completely consumed
-before reuse; any non-success or partial response closes the connection, and
-every later request explicitly restores keep-alive mode. Telemetry request
-bodies are copied from LittleFS into bounded RAM chunks with the file closed
-before each socket write, so flash and TCP progress do not hold one another's
-resources. This keeps the five-second control poll from exhausting the ESP32's
-bounded TCP PCB pool with HTTP/1.0 `TIME_WAIT` connections.
+Authenticated control, health, log, and bounded-payload operations share that
+worker's serialized HTTP/1.1 keep-alive session. Streamed telemetry has a second
+dedicated persistent HTTP/1.1 session, and each request contains up to thirty
+records. Its body is copied from LittleFS into bounded RAM chunks with the file
+closed before each socket write, so flash and TCP progress do not hold one
+another's resources or wedge the control transport. Successful responses are
+completely consumed before reuse; a transport failure, non-success HTTP
+response, or partial response closes only the affected session, then retries
+the immutable envelope on a clean socket. This preserves full configured
+backlog throughput without churning a new TCP connection per request.
 
 Microphone electrical/timing health is also hysteretic: 60 consecutive bad
 sample windows (about one second) are required to enter `degraded`; eight
@@ -257,10 +259,13 @@ candidate boot selection is the final guarded flash handoff: trying to
 "restore" the running slot afterward would mark it `NEW` under ESP-IDF rollback
 semantics and destroy the known-good rollback invariant.
 
-The serialized backend HTTP connection also has a transport circuit breaker.
-A send-payload failure, or three consecutive transport failures, closes the
-socket and recycles the station connection. A 60-second cooldown prevents a
-real devb outage from continuously resetting otherwise healthy Wi-Fi.
+The serialized bounded-operation HTTP connection also has a transport circuit
+breaker. A send-payload failure, or three consecutive transport failures,
+closes both sessions and recycles the station connection. A streamed telemetry
+failure closes only its dedicated socket and retries the immutable envelope;
+control/health traffic remains responsible for confirming a path-wide outage.
+A 60-second cooldown prevents a real devb outage from continuously resetting
+otherwise healthy Wi-Fi.
 
 ## Hardware invariants
 

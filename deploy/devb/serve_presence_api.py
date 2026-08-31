@@ -44,11 +44,11 @@ def main() -> None:
             app=app,
             log_level="info",
             proxy_headers=False,
-            # The device polls control every five seconds and deliberately
-            # reuses its authenticated HTTP/1.1 connection. Keep the server
-            # side open comfortably beyond that cadence so a normal poll does
-            # not race Uvicorn's five-second default timeout.
-            timeout_keep_alive=30,
+            # The device keeps separate HTTP/1.1 sessions for five-second
+            # bounded operations and streamed telemetry batches. The normal
+            # telemetry cadence is thirty seconds, so keep both server sides
+            # open well beyond that interval rather than racing the idle edge.
+            timeout_keep_alive=90,
             # A persistent device connection must not hold a deployment in
             # graceful shutdown until systemd's much longer stop timeout.
             timeout_graceful_shutdown=30,

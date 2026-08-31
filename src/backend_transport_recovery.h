@@ -13,9 +13,10 @@ struct BackendTransportRecoveryDecision {
   uint64_t cooldownRemainingMs = 0;
 };
 
-// Tracks failures for the one serialized backend transport. A successful
-// response clears the current failure streak. Recycles are rate-limited so a
-// real backend outage cannot make the device continuously reset its Wi-Fi
+// Tracks path-level recovery from bounded-operation transport failures. Any
+// proven backend response clears the current failure streak, including one on
+// the independently serialized telemetry session. Recycles are rate-limited so
+// a real backend outage cannot make the device continuously reset its Wi-Fi
 // connection.
 class BackendTransportRecoveryPolicy {
  public:

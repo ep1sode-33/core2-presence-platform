@@ -29,13 +29,22 @@ The tool reuses the existing per-device development-OTA secret. Add
 After the reported restart, hold B for diagnostics and verify the LAN IP,
 backend result, and clock status.
 
-## Uploader socket failure or backend restart
+## Isolated telemetry socket failure
 
 Do not erase flash or reprovision a device whose settings still validate. Once
-the API is reachable again, the uploader discards any incomplete connection,
-uses bounded backoff, opens a clean keep-alive session, and resumes the exact
-immutable LittleFS envelopes. Confirm new telemetry acknowledgements and a
-falling spool count before attempting any stronger recovery.
+the API is reachable again, the uploader discards any incomplete telemetry
+connection, uses bounded backoff, opens a clean dedicated keep-alive session,
+and resumes the exact immutable LittleFS envelopes without disturbing its
+separate control/health/log session. Confirm new telemetry acknowledgements and
+a falling spool count before attempting any stronger recovery.
+
+## Backend restart or path outage
+
+A server restart can invalidate both persistent sessions. Each request still
+uses bounded backoff and retries its immutable work; repeated bounded-operation
+transport failures may close both sockets and recycle the station connection.
+Once the API path recovers, confirm both control polling and new telemetry
+acknowledgements before attempting flash erasure or reprovisioning.
 
 ## Broken development or production OTA client
 

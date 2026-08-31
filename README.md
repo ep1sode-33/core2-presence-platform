@@ -68,11 +68,14 @@ The worker uses bounded backoff and keeps old-boot envelopes under their
 original boot ID and clock anchor. Sensor sampling and display rendering never
 perform Wi-Fi, HTTP, NVS, or flash I/O.
 
-Authenticated backend operations share one serialized HTTP/1.1 keep-alive
-session. Telemetry request bodies are read from LittleFS into bounded RAM chunks
-with the file closed before each socket write. A failed or partially consumed
-response discards that connection; the next request explicitly restores normal
-keep-alive mode.
+Authenticated control, health, log, and bounded-payload operations share one
+serialized HTTP/1.1 keep-alive session. Streamed telemetry uses a second
+dedicated persistent HTTP/1.1 session; each batch contains up to thirty records,
+with its LittleFS body read into bounded RAM chunks and the file closed before
+each socket write. A transport failure, non-success HTTP response, or partially
+consumed response discards only the affected connection, so flash-backed
+streaming cannot wedge the control transport and backlog drain is not capped
+below the configured sampling rate.
 
 Wi-Fi, backend URL, and bearer token are provisioned over USB and stored in a
 two-slot NVS record so a reset during an update leaves the previous valid
