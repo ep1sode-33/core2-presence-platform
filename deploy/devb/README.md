@@ -3,7 +3,9 @@
 The presence API is installed at `/opt/m5-presence`, keeps its SQLite database
 in `/var/lib/m5-presence`, and listens only on `192.168.0.46:8081` plus
 `100.117.242.46:8081`. The existing environmental API on port 8080 is not part
-of this unit.
+of this unit. Uvicorn's keep-alive timeout is 30 seconds so the M5GO's
+five-second control poll can reuse one authenticated HTTP/1.1 connection
+without racing the server's default five-second idle timeout.
 
 From an unpacked repository checkout on a first deployment:
 

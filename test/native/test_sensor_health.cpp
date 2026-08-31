@@ -27,14 +27,32 @@ int main() {
   assert(latch.observe(SensorHealthStatus::kHealthy) ==
          SensorHealthStatus::kHealthy);
   assert(latch.observe(SensorHealthStatus::kFault) ==
-         SensorHealthStatus::kDegraded);
+         SensorHealthStatus::kHealthy);
   assert(latch.observe(SensorHealthStatus::kFault) ==
-         SensorHealthStatus::kDegraded);
+         SensorHealthStatus::kHealthy);
   assert(latch.observe(SensorHealthStatus::kFault) ==
          SensorHealthStatus::kFault);
   assert(latch.observe(SensorHealthStatus::kHealthy) ==
          SensorHealthStatus::kFault);
   assert(latch.observe(SensorHealthStatus::kHealthy) ==
+         SensorHealthStatus::kHealthy);
+
+  SensorHealthLatch transientLatch(8, 2, 3);
+  assert(transientLatch.observe(SensorHealthStatus::kHealthy) ==
+         SensorHealthStatus::kHealthy);
+  assert(transientLatch.observe(SensorHealthStatus::kDegraded) ==
+         SensorHealthStatus::kHealthy);
+  assert(transientLatch.observe(SensorHealthStatus::kHealthy) ==
+         SensorHealthStatus::kHealthy);
+  assert(transientLatch.observe(SensorHealthStatus::kDegraded) ==
+         SensorHealthStatus::kHealthy);
+  assert(transientLatch.observe(SensorHealthStatus::kDegraded) ==
+         SensorHealthStatus::kHealthy);
+  assert(transientLatch.observe(SensorHealthStatus::kDegraded) ==
+         SensorHealthStatus::kDegraded);
+  assert(transientLatch.observe(SensorHealthStatus::kHealthy) ==
+         SensorHealthStatus::kDegraded);
+  assert(transientLatch.observe(SensorHealthStatus::kHealthy) ==
          SensorHealthStatus::kHealthy);
 
   PirHealthTracker pir;

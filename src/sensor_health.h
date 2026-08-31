@@ -21,10 +21,15 @@ SensorHealthStatus classifyMicrophoneWindow(
 
 class SensorHealthLatch {
  public:
+  // Transient ADC timing outliers are common while the Wi-Fi stack services an
+  // interrupt. Require consecutive bad windows before surfacing degradation,
+  // then use a longer healthy run to recover and avoid status chatter.
   explicit SensorHealthLatch(uint8_t badWindowsToFault = 8,
-                             uint8_t goodWindowsToRecover = 24)
+                             uint8_t goodWindowsToRecover = 24,
+                             uint8_t badWindowsToDegraded = 3)
       : badWindowsToFault_(badWindowsToFault),
-        goodWindowsToRecover_(goodWindowsToRecover) {}
+        goodWindowsToRecover_(goodWindowsToRecover),
+        badWindowsToDegraded_(badWindowsToDegraded) {}
 
   SensorHealthStatus observe(SensorHealthStatus windowStatus);
   SensorHealthStatus status() const { return status_; }
@@ -32,6 +37,7 @@ class SensorHealthLatch {
  private:
   uint8_t badWindowsToFault_ = 8;
   uint8_t goodWindowsToRecover_ = 24;
+  uint8_t badWindowsToDegraded_ = 3;
   uint8_t badWindows_ = 0;
   uint8_t goodWindows_ = 0;
   SensorHealthStatus status_ = SensorHealthStatus::kUnknown;

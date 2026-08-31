@@ -408,6 +408,35 @@ class UploaderWorker {
     return std::min<uint64_t>(base + entropy % jitterRange, maximumMs);
   }
 
+  bool beginBackendRequest(const char* url, uint16_t timeoutMs) {
+    // The control endpoint is polled every five seconds. Opening a fresh
+    // HTTP/1.0 connection for every control/log/health/telemetry operation can
+    // fill the ESP32's small TCP PCB pool with TIME_WAIT sockets. Keep one
+    // serialized HTTP/1.1 connection for the authenticated backend instead.
+    backendHttp_.setConnectTimeout(3000);
+    backendHttp_.setTimeout(timeoutMs);
+    backendHttp_.useHTTP10(false);
+    if (backendHttp_.begin(backendClient_, url)) {
+      return true;
+    }
+    backendHttp_.setReuse(false);
+    backendHttp_.end();
+    backendClient_.stop();
+    return false;
+  }
+
+  void endBackendRequest(bool responseFullyConsumed) {
+    if (!responseFullyConsumed) {
+      // An unread or partial response must never contaminate the next request
+      // on the persistent connection.
+      backendHttp_.setReuse(false);
+    }
+    backendHttp_.end();
+    if (!responseFullyConsumed) {
+      backendClient_.stop();
+    }
+  }
+
   static bool readHttpBodyToBuffer(HTTPClient& http, uint8_t* output,
                                    size_t capacity, size_t* outputSize) {
     if (output == nullptr || capacity == 0 || outputSize == nullptr) {
@@ -561,16 +590,11 @@ class UploaderWorker {
       scheduleCoreDumpRetry(now);
       return;
     }
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(15000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 15000)) {
       scheduleCoreDumpRetry(now);
       return;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -581,7 +605,7 @@ class UploaderWorker {
     const bool responseOk = status == HTTP_CODE_OK && body.complete() &&
                             !body.failed() &&
                             readExactAckBody(http, response);
-    http.end();
+    endBackendRequest(responseOk);
     if (!responseOk) {
       scheduleCoreDumpRetry(now);
       Serial.printf("EVENT,coredump,retry,%d\n", status);
@@ -834,16 +858,11 @@ class UploaderWorker {
       controlOperatorHalted_ = true;
       return;
     }
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       scheduleCommandAckRetry(now);
       return;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -852,7 +871,7 @@ class UploaderWorker {
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
-    http.end();
+    endBackendRequest(bodyOk);
     if (!bodyOk) {
       if (status == HTTP_CODE_UNAUTHORIZED) {
         controlOperatorHalted_ = true;
@@ -963,28 +982,23 @@ class UploaderWorker {
       return;
     }
 
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       scheduleControlRetry(now);
       return;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Accept", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
     const int status = http.GET();
     if (status == HTTP_CODE_UNAUTHORIZED) {
-      http.end();
+      endBackendRequest(false);
       controlOperatorHalted_ = true;
       Serial.println("EVENT,control,operator_halt,401");
       return;
     }
     if (status != HTTP_CODE_OK) {
-      http.end();
+      endBackendRequest(false);
       scheduleControlRetry(now);
       Serial.printf("EVENT,control,poll_retry,%d\n", status);
       return;
@@ -993,7 +1007,7 @@ class UploaderWorker {
     const bool bodyOk = readHttpBodyToBuffer(
         http, controlResponseBytes, kMaximumControlResponseBytes,
         &responseSize);
-    http.end();
+    endBackendRequest(bodyOk);
     if (!bodyOk) {
       scheduleControlRetry(now);
       Serial.println("EVENT,control,poll_bad_body");
@@ -1096,16 +1110,11 @@ class UploaderWorker {
       scheduleOperationalLogRetry(now);
       return;
     }
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       scheduleOperationalLogRetry(now);
       return;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -1114,7 +1123,7 @@ class UploaderWorker {
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
-    http.end();
+    endBackendRequest(bodyOk);
     if (!bodyOk) {
       scheduleOperationalLogRetry(now);
       Serial.printf("EVENT,logs,retry,%d\n", status);
@@ -1929,16 +1938,11 @@ class UploaderWorker {
     if (!buildDeviceUrl(relative, url, sizeof(url))) {
       return false;
     }
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       nextOtaReleaseAttemptMs_ = monotonicMillis() + kOtaReleaseRetryMs;
       return false;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -1947,7 +1951,7 @@ class UploaderWorker {
     String response;
     const bool bodyOk = status == HTTP_CODE_OK &&
                         readExactAckBody(http, response);
-    http.end();
+    endBackendRequest(bodyOk);
     if (!bodyOk) {
       nextOtaReleaseAttemptMs_ = monotonicMillis() + kOtaReleaseRetryMs;
       return false;
@@ -1970,15 +1974,10 @@ class UploaderWorker {
     if (!buildDeviceUrl(relativePath, url, sizeof(url))) {
       return false;
     }
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(10000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 10000)) {
       return false;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Accept", "application/octet-stream");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -1986,7 +1985,7 @@ class UploaderWorker {
     feedWatchdog();
     const bool ok = status == HTTP_CODE_OK &&
                     readHttpBodyToBuffer(http, output, capacity, outputSize);
-    http.end();
+    endBackendRequest(ok);
     return ok;
   }
 
@@ -2032,15 +2031,10 @@ class UploaderWorker {
     if (!buildDeviceUrl(desired.imageUrl, url, sizeof(url))) {
       return false;
     }
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(10000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 10000)) {
       return false;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Accept", "application/octet-stream");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -2048,12 +2042,12 @@ class UploaderWorker {
     feedWatchdog();
     if (!criticalQueuesSafeForOta() || status != HTTP_CODE_OK ||
         http.getSize() != static_cast<int>(release.manifest().firmwareSize)) {
-      http.end();
+      endBackendRequest(false);
       return false;
     }
     OtaStreamUpdater updater;
     if (!updater.begin(release, otaEsp32ApplicationUpdateBackend())) {
-      http.end();
+      endBackendRequest(false);
       return false;
     }
     productionImageSize_ = release.manifest().firmwareSize;
@@ -2061,7 +2055,7 @@ class UploaderWorker {
     WiFiClient* stream = http.getStreamPtr();
     if (stream == nullptr) {
       updater.abort();
-      http.end();
+      endBackendRequest(false);
       return false;
     }
     stream->setTimeout(1000);
@@ -2071,7 +2065,7 @@ class UploaderWorker {
       feedWatchdog();
       if (consumeSafetyAbort() || !criticalQueuesSafeForOta()) {
         updater.abort();
-        http.end();
+        endBackendRequest(false);
         return false;
       }
       const int available = stream->available();
@@ -2083,7 +2077,7 @@ class UploaderWorker {
         const int read = stream->read(otaImageChunk, requested);
         if (read <= 0 || !updater.write(otaImageChunk,
                                        static_cast<size_t>(read))) {
-          http.end();
+          endBackendRequest(false);
           return false;
         }
         lastProgressMs = monotonicMillis();
@@ -2103,12 +2097,12 @@ class UploaderWorker {
       if (!http.connected() ||
           current - lastProgressMs >= kOtaImageInactivityTimeoutMs) {
         updater.abort();
-        http.end();
+        endBackendRequest(false);
         return false;
       }
       vTaskDelay(pdMS_TO_TICKS(10));
     }
-    http.end();
+    endBackendRequest(true);
     if (consumeSafetyAbort() || !criticalQueuesSafeForOta()) {
       updater.abort();
       return false;
@@ -2464,23 +2458,21 @@ class UploaderWorker {
       return;
     }
 
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       nextHealthAttemptMs_ = now + kHealthRetryMs;
       return;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
     const int status = http.sendRequest("POST", healthPayloadBytes,
                                         payload.size);
-    http.end();
-    if (status == HTTP_CODE_OK) {
+    String response;
+    const bool bodyOk = status == HTTP_CODE_OK &&
+                        readExactAckBody(http, response);
+    endBackendRequest(bodyOk);
+    if (bodyOk) {
       lastHealthSuccessMs_ = monotonicMillis();
       // Periodicity is derived from lastHealthSuccessMs_. Keep the retry gate
       // open so a subsequent local level change is reported immediately.
@@ -3308,28 +3300,23 @@ class UploaderWorker {
       return;
     }
 
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       nextConfigPollMs_ = now + kConfigRetryMs;
       return;
     }
+    HTTPClient& http = backendHttp_;
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
     const int status = http.GET();
     if (status == HTTP_CODE_UNAUTHORIZED || status == HTTP_CODE_NOT_FOUND) {
-      http.end();
+      endBackendRequest(false);
       operatorHalted_ = true;
       configResult_ = HealthOperationResult::kRejected;
       Serial.printf("EVENT,config,operator_halt,%d\n", status);
       return;
     }
     if (status != HTTP_CODE_OK) {
-      http.end();
+      endBackendRequest(false);
       nextConfigPollMs_ = now + kConfigRetryMs;
       Serial.printf("EVENT,config,retry,%d\n", status);
       return;
@@ -3338,14 +3325,16 @@ class UploaderWorker {
     const int responseSize = http.getSize();
     if (responseSize < 0 ||
         responseSize > static_cast<int>(kMaximumConfigResponseBytes)) {
-      http.end();
+      endBackendRequest(false);
       nextConfigPollMs_ = now + kConfigRetryMs;
       Serial.println("EVENT,config,retry_bad_response,response_size");
       return;
     }
     const String response = http.getString();
-    http.end();
-    if (response.length() != static_cast<size_t>(responseSize)) {
+    const bool bodyOk =
+        response.length() == static_cast<size_t>(responseSize);
+    endBackendRequest(bodyOk);
+    if (!bodyOk) {
       nextConfigPollMs_ = now + kConfigRetryMs;
       Serial.println("EVENT,config,retry_bad_response,truncated");
       return;
@@ -3598,17 +3587,12 @@ class UploaderWorker {
       return true;
     }
 
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       envelope.close();
       scheduleBackoff(now);
       return true;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -3619,13 +3603,13 @@ class UploaderWorker {
     if (status == HTTP_CODE_OK) {
       String response;
       if (!readExactAckBody(http, response)) {
-        http.end();
+        endBackendRequest(false);
         Serial.printf("EVENT,uploader,retry_bad_ack,%s,bounded_read\n",
                       metadata.batchId);
         scheduleBackoff(now);
         return true;
       }
-      http.end();
+      endBackendRequest(true);
       const IngestAckParseResult parsed = parseIngestAck(
           response.c_str(), response.length(), metadata.batchId,
           std::strlen(metadata.batchId), metadata.recordCount,
@@ -3655,7 +3639,7 @@ class UploaderWorker {
       return true;
     }
 
-    http.end();
+    endBackendRequest(false);
     if (status == HTTP_CODE_UNAUTHORIZED || status == HTTP_CODE_NOT_FOUND) {
       Serial.printf("EVENT,uploader,operator_halt,%d,%s\n", status,
                     metadata.batchId);
@@ -3740,16 +3724,11 @@ class UploaderWorker {
       return true;
     }
 
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       scheduleBackoff(now);
       return true;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -3759,13 +3738,13 @@ class UploaderWorker {
     if (status == HTTP_CODE_OK) {
       String response;
       if (!readExactAckBody(http, response)) {
-        http.end();
+        endBackendRequest(false);
         Serial.printf("EVENT,feedback,wait_retry_bad_ack,%s,bounded_read\n",
                       metadata.telemetryBatchId);
         scheduleBackoff(now);
         return true;
       }
-      http.end();
+      endBackendRequest(true);
       const IngestAckParseResult parsed = parseIngestAck(
           response.c_str(), response.length(), metadata.telemetryBatchId,
           std::strlen(metadata.telemetryBatchId), 1, metadata.seq);
@@ -3797,7 +3776,7 @@ class UploaderWorker {
       return true;
     }
 
-    http.end();
+    endBackendRequest(false);
     if (status == HTTP_CODE_UNAUTHORIZED || status == HTTP_CODE_NOT_FOUND) {
       Serial.printf("EVENT,feedback,wait_operator_halt,%d,%s\n", status,
                     metadata.telemetryBatchId);
@@ -3886,16 +3865,11 @@ class UploaderWorker {
       return true;
     }
 
-    WiFiClient client;
-    HTTPClient http;
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    http.setReuse(false);
-    http.useHTTP10(true);
-    if (!http.begin(client, url)) {
+    if (!beginBackendRequest(url, 5000)) {
       scheduleBackoff(now);
       return true;
     }
+    HTTPClient& http = backendHttp_;
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
@@ -3905,13 +3879,13 @@ class UploaderWorker {
     if (status == HTTP_CODE_OK) {
       String response;
       if (!readExactAckBody(http, response)) {
-        http.end();
+        endBackendRequest(false);
         Serial.printf("EVENT,feedback,ready_retry_bad_ack,%s,bounded_read\n",
                       metadata.feedbackId);
         scheduleBackoff(now);
         return true;
       }
-      http.end();
+      endBackendRequest(true);
       const FeedbackAckParseResult parsed = parseFeedbackAck(
           response.c_str(), response.length(), workerIdentity.deviceId,
           expectedRecord);
@@ -3935,7 +3909,7 @@ class UploaderWorker {
       return true;
     }
 
-    http.end();
+    endBackendRequest(false);
     if (status == HTTP_CODE_UNAUTHORIZED) {
       Serial.printf("EVENT,feedback,ready_operator_halt,%d,%s\n", status,
                     metadata.feedbackId);
@@ -4016,6 +3990,8 @@ class UploaderWorker {
   OtaInstallState installState_ = {};
   PendingCoreDump pendingCoreDump_;
   OtaSafetyAbortRequest lastSafetyMetrics_ = {};
+  WiFiClient backendClient_;
+  HTTPClient backendHttp_;
   char conflictProbeBatchId_[96] = {};
   char developmentHostname_[33] = {};
   char activeReleaseId_[49] = {};

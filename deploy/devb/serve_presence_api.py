@@ -39,9 +39,18 @@ def main() -> None:
             listener.close()
         raise
 
-    uvicorn.Server(uvicorn.Config(app=app, log_level="info", proxy_headers=False)).run(
-        sockets=listeners
-    )
+    uvicorn.Server(
+        uvicorn.Config(
+            app=app,
+            log_level="info",
+            proxy_headers=False,
+            # The device polls control every five seconds and deliberately
+            # reuses its authenticated HTTP/1.1 connection. Keep the server
+            # side open comfortably beyond that cadence so a normal poll does
+            # not race Uvicorn's five-second default timeout.
+            timeout_keep_alive=30,
+        )
+    ).run(sockets=listeners)
 
 
 if __name__ == "__main__":

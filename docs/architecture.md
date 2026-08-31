@@ -40,6 +40,18 @@ not upstream observation timestamps.
 The hardware loop never performs network or flash I/O. Once per second it
 publishes an immutable aggregate sample to a bounded queue; state transitions
 publish immediately. A lower-priority worker batches records and uploads them.
+All authenticated port-8081 operations share that worker's single serialized
+HTTP/1.1 keep-alive session. Successful responses are completely consumed
+before reuse; any non-success or partial response closes the connection. This
+keeps the five-second control poll from exhausting the ESP32's bounded TCP PCB
+pool with HTTP/1.0 `TIME_WAIT` connections.
+
+Microphone electrical/timing health is also hysteretic: three consecutive bad
+sample windows are required to enter `degraded`; eight consecutive bad windows
+ending in a hard-fault classification enter `fault`; and 24 healthy windows
+recover. One Wi-Fi interrupt or scheduler outlier therefore cannot generate a
+health/log feedback loop, while persistent sensor faults remain visible
+quickly.
 
 Every boot gets a random `boot_id`. Every sample and transition within that boot
 gets a single increasing `seq`. The backend identity is therefore

@@ -57,7 +57,8 @@ SensorHealthStatus SensorHealthLatch::observe(
   if (windowStatus == SensorHealthStatus::kFault &&
       badWindows_ >= badWindowsToFault_) {
     status_ = SensorHealthStatus::kFault;
-  } else if (status_ != SensorHealthStatus::kFault) {
+  } else if (status_ != SensorHealthStatus::kFault &&
+             badWindows_ >= badWindowsToDegraded_) {
     status_ = SensorHealthStatus::kDegraded;
   }
   return status_;
