@@ -68,6 +68,12 @@ The worker uses bounded backoff and keeps old-boot envelopes under their
 original boot ID and clock anchor. Sensor sampling and display rendering never
 perform Wi-Fi, HTTP, NVS, or flash I/O.
 
+Authenticated backend operations share one serialized HTTP/1.1 keep-alive
+session. Telemetry request bodies are read from LittleFS into bounded RAM chunks
+with the file closed before each socket write. A failed or partially consumed
+response discards that connection; the next request explicitly restores normal
+keep-alive mode.
+
 Wi-Fi, backend URL, and bearer token are provisioned over USB and stored in a
 two-slot NVS record so a reset during an update leaves the previous valid
 configuration intact:

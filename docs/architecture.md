@@ -42,9 +42,12 @@ publishes an immutable aggregate sample to a bounded queue; state transitions
 publish immediately. A lower-priority worker batches records and uploads them.
 All authenticated port-8081 operations share that worker's single serialized
 HTTP/1.1 keep-alive session. Successful responses are completely consumed
-before reuse; any non-success or partial response closes the connection. This
-keeps the five-second control poll from exhausting the ESP32's bounded TCP PCB
-pool with HTTP/1.0 `TIME_WAIT` connections.
+before reuse; any non-success or partial response closes the connection, and
+every later request explicitly restores keep-alive mode. Telemetry request
+bodies are copied from LittleFS into bounded RAM chunks with the file closed
+before each socket write, so flash and TCP progress do not hold one another's
+resources. This keeps the five-second control poll from exhausting the ESP32's
+bounded TCP PCB pool with HTTP/1.0 `TIME_WAIT` connections.
 
 Microphone electrical/timing health is also hysteretic: three consecutive bad
 sample windows are required to enter `degraded`; eight consecutive bad windows
@@ -71,7 +74,8 @@ existing record identity is an HTTP 409 rather than a silent overwrite.
 - Records from different `boot_id` values are never mixed in one batch. Every
   flash spool segment stores its original `boot_id` and optional clock anchor;
   after reboot it must not inherit the new boot's identity or clock.
-- Records are removed only after HTTP 200, matching response `batch_id`,
+- Records are removed only after the local request body is sent completely,
+  HTTP 200, matching response `batch_id`,
   `stored + duplicates == request.records.length`, and matching `max_seq`.
 - Network failures, timeouts, HTTP 429, and HTTP 5xx use bounded exponential
   backoff with jitter. HTTP 401 or an endpoint 404 halts uploads globally and

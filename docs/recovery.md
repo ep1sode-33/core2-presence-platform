@@ -29,6 +29,14 @@ The tool reuses the existing per-device development-OTA secret. Add
 After the reported restart, hold B for diagnostics and verify the LAN IP,
 backend result, and clock status.
 
+## Uploader socket failure or backend restart
+
+Do not erase flash or reprovision a device whose settings still validate. Once
+the API is reachable again, the uploader discards any incomplete connection,
+uses bounded backoff, opens a clean keep-alive session, and resumes the exact
+immutable LittleFS envelopes. Confirm new telemetry acknowledgements and a
+falling spool count before attempting any stronger recovery.
+
 ## Broken development or production OTA client
 
 Build and install the ordinary serial environment. This is also the bootstrap
@@ -98,5 +106,7 @@ Never accept a public key supplied inside an OTA manifest as a new trust root.
 - brightness still follows `PRESENT=255`, `COOLDOWN=60`, `IDLE=0`;
 - the firmware build ID matches the retained ELF and release manifest;
 - health and telemetry receive authenticated acknowledgements;
+- upload automatically reconnects and drains after a devb service restart;
+- no persistent `errno 11`, HTTPClient `-3`/`-11`, or watchdog reset appears;
 - queued transition/feedback records drain without critical drops; and
 - development OTA is unreachable after its countdown closes.

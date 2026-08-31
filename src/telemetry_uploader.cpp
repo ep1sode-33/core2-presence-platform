@@ -233,6 +233,71 @@ class WatchdogFeedingStream final : public Stream {
   Stream& source_;
 };
 
+// HTTPClient keeps its input Stream alive while it writes each body chunk. A
+// directly-open LittleFS File made the ESP32 socket return EAGAIN before the
+// first telemetry body byte. Reopen only for each bounded flash read, then
+// close before HTTPClient writes that RAM chunk to the network.
+class ReopeningLittleFsReadStream final : public Stream {
+ public:
+  ReopeningLittleFsReadStream(const char* path, size_t size)
+      : path_(path), size_(size) {}
+
+  int available() override {
+    if (failed_) {
+      return -1;
+    }
+    const size_t remaining = size_ - offset_;
+    return remaining > static_cast<size_t>(INT_MAX)
+               ? INT_MAX
+               : static_cast<int>(remaining);
+  }
+
+  int read() override {
+    uint8_t value = 0;
+    return readBytes(&value, 1) == 1 ? value : -1;
+  }
+
+  int peek() override { return -1; }
+
+  size_t readBytes(uint8_t* buffer, size_t length) override {
+    feedUploaderTaskWatchdog();
+    if (length == 0) {
+      return 0;
+    }
+    if (failed_ || path_ == nullptr || buffer == nullptr || offset_ > size_) {
+      failed_ = true;
+      return 0;
+    }
+    const size_t requested = std::min(length, size_ - offset_);
+    File file = LittleFS.open(path_, FILE_READ);
+    if (!file || file.size() != size_ || !file.seek(offset_)) {
+      file.close();
+      failed_ = true;
+      return 0;
+    }
+    const size_t read = file.read(buffer, requested);
+    file.close();
+    if (read != requested) {
+      failed_ = true;
+      return read;
+    }
+    offset_ += read;
+    feedUploaderTaskWatchdog();
+    delay(0);
+    return read;
+  }
+
+  size_t write(uint8_t) override { return 0; }
+
+  bool complete() const { return !failed_ && offset_ == size_; }
+
+ private:
+  const char* path_ = nullptr;
+  size_t size_ = 0;
+  size_t offset_ = 0;
+  bool failed_ = false;
+};
+
 class UploaderWorker {
  public:
   void run() {
@@ -416,6 +481,9 @@ class UploaderWorker {
     backendHttp_.setConnectTimeout(3000);
     backendHttp_.setTimeout(timeoutMs);
     backendHttp_.useHTTP10(false);
+    // A failed/partial response deliberately disables reuse before closing.
+    // Restore the normal mode for the next clean request attempt.
+    backendHttp_.setReuse(true);
     if (backendHttp_.begin(backendClient_, url)) {
       return true;
     }
@@ -3573,6 +3641,24 @@ class UploaderWorker {
       scheduleBackoff(now);
       return true;
     }
+    const size_t envelopeSize = envelope.size();
+    envelope.close();
+    if (envelopeSize == 0) {
+      // A zero-byte immutable envelope can never become uploadable. Preserve
+      // it for diagnosis without letting it block every later spool forever.
+      if (moveToDeadLetter(metadata, 0)) {
+        telemetryAckResult_ = HealthOperationResult::kRejected;
+        clearTelemetryConflictProbe(metadata.batchId);
+        Serial.printf("EVENT,uploader,dead_letter_empty,%s\n",
+                      metadata.batchId);
+        resetBackoff(now);
+      } else {
+        Serial.printf("EVENT,uploader,dead_letter_empty_failed,%s\n",
+                      metadata.batchId);
+        scheduleBackoff(now);
+      }
+      return true;
+    }
 
     char url[224] = {};
     const int urlLength =
@@ -3580,7 +3666,6 @@ class UploaderWorker {
                       workerSettings.serverBaseUrl, workerIdentity.deviceId);
     if (urlLength <= 0 || static_cast<size_t>(urlLength) >= sizeof(url) ||
         std::strncmp(url, "http://", 7) != 0) {
-      envelope.close();
       operatorHalted_ = true;
       telemetryAckResult_ = HealthOperationResult::kRejected;
       Serial.println("EVENT,uploader,unsupported_server_url");
@@ -3588,7 +3673,6 @@ class UploaderWorker {
     }
 
     if (!beginBackendRequest(url, 5000)) {
-      envelope.close();
       scheduleBackoff(now);
       return true;
     }
@@ -3596,11 +3680,10 @@ class UploaderWorker {
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
-    const size_t envelopeSize = envelope.size();
-    const int status = http.sendRequest("POST", &envelope, envelopeSize);
-    envelope.close();
+    ReopeningLittleFsReadStream body(metadata.path, envelopeSize);
+    const int status = http.sendRequest("POST", &body, envelopeSize);
 
-    if (status == HTTP_CODE_OK) {
+    if (status == HTTP_CODE_OK && body.complete()) {
       String response;
       if (!readExactAckBody(http, response)) {
         endBackendRequest(false);
