@@ -7,10 +7,13 @@
 #include <WiFi.h>
 #include <esp_sntp.h>
 #include <esp_system.h>
+#include <esp_wifi.h>
 
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <memory>
+#include <new>
 #include <sys/time.h>
 
 #include "backlog_policy.h"
@@ -42,6 +45,7 @@
 #include "ota_trust_store.h"
 #include "ota_update.h"
 #include "spool_name.h"
+#include "telemetry_upload_limits.h"
 #include "telemetry_json.h"
 #include "uploader_watchdog.h"
 
@@ -54,7 +58,6 @@ constexpr char kFeedbackDirectory[] = "/feedback";
 constexpr char kFeedbackWaitDirectory[] = "/feedback/wait";
 constexpr char kFeedbackReadyDirectory[] = "/feedback/ready";
 constexpr char kFeedbackPendingPath[] = "/feedback/.pending";
-constexpr size_t kMaxFirmwareBatchSize = 30;
 constexpr size_t kMaxFeedbackSpoolFiles = 64;
 constexpr size_t kMaxDeadFiles = 16;
 constexpr uint64_t kFreezeIntervalMs = 30000;
@@ -85,6 +88,9 @@ constexpr size_t kMaximumControlResponseBytes = 8192;
 constexpr size_t kMaximumOperationalLogPayloadBytes = 8192;
 constexpr size_t kMaximumCommandAckPayloadBytes = 1024;
 constexpr size_t kMaximumReleaseStatusPayloadBytes = 2048;
+constexpr size_t kTelemetryUploadWriteChunkBytes = 512;
+static_assert(kTelemetryUploadWriteChunkBytes > 0 &&
+              kTelemetryUploadWriteChunkBytes <= HTTP_TCP_BUFFER_SIZE);
 constexpr size_t kMaximumManifestBundleBytes =
     kOtaManifestMaximumSize + kOtaP256SignatureSize;
 constexpr size_t kOperationalLogBatchSize = 24;
@@ -234,23 +240,24 @@ class WatchdogFeedingStream final : public Stream {
   Stream& source_;
 };
 
-// HTTPClient keeps its input Stream alive while it writes each body chunk. A
-// directly-open LittleFS File made the ESP32 socket return EAGAIN before the
-// first telemetry body byte. Reopen only for each bounded flash read, then
-// close before HTTPClient writes that RAM chunk to the network.
-class ReopeningLittleFsReadStream final : public Stream {
+// Keep LittleFS closed for the entire network request while preserving a
+// watchdog feed point between bounded socket writes. Arduino-ESP32 2.0.17 can
+// spend roughly ten seconds retrying one WiFiClient::write after EAGAIN, so a
+// whole-envelope byte write could consume the complete 30-second uploader
+// watchdog budget before the recovery policy sees its transport error.
+class WatchdogFeedingMemoryReadStream final : public Stream {
  public:
-  ReopeningLittleFsReadStream(const char* path, size_t size)
-      : path_(path), size_(size) {}
+  WatchdogFeedingMemoryReadStream(const uint8_t* bytes, size_t size)
+      : bytes_(bytes), size_(size) {}
 
   int available() override {
-    if (failed_) {
+    feedUploaderTaskWatchdog();
+    if (failed_ || offset_ > size_) {
       return -1;
     }
     const size_t remaining = size_ - offset_;
-    return remaining > static_cast<size_t>(INT_MAX)
-               ? INT_MAX
-               : static_cast<int>(remaining);
+    return static_cast<int>(
+        std::min(remaining, kTelemetryUploadWriteChunkBytes));
   }
 
   int read() override {
@@ -258,33 +265,27 @@ class ReopeningLittleFsReadStream final : public Stream {
     return readBytes(&value, 1) == 1 ? value : -1;
   }
 
-  int peek() override { return -1; }
+  int peek() override {
+    if (failed_ || bytes_ == nullptr || offset_ >= size_) {
+      return -1;
+    }
+    return bytes_[offset_];
+  }
 
-  size_t readBytes(uint8_t* buffer, size_t length) override {
+  size_t readBytes(uint8_t* output, size_t length) override {
     feedUploaderTaskWatchdog();
     if (length == 0) {
       return 0;
     }
-    if (failed_ || path_ == nullptr || buffer == nullptr || offset_ > size_) {
+    if (failed_ || bytes_ == nullptr || output == nullptr || offset_ > size_) {
       failed_ = true;
       return 0;
     }
-    const size_t requested = std::min(length, size_ - offset_);
-    File file = LittleFS.open(path_, FILE_READ);
-    if (!file || file.size() != size_ || !file.seek(offset_)) {
-      file.close();
-      failed_ = true;
-      return 0;
-    }
-    const size_t read = file.read(buffer, requested);
-    file.close();
-    if (read != requested) {
-      failed_ = true;
-      return read;
-    }
+    const size_t read =
+        std::min({length, size_ - offset_, kTelemetryUploadWriteChunkBytes});
+    std::memcpy(output, bytes_ + offset_, read);
     offset_ += read;
     feedUploaderTaskWatchdog();
-    delay(0);
     return read;
   }
 
@@ -293,7 +294,7 @@ class ReopeningLittleFsReadStream final : public Stream {
   bool complete() const { return !failed_ && offset_ == size_; }
 
  private:
-  const char* path_ = nullptr;
+  const uint8_t* bytes_ = nullptr;
   size_t size_ = 0;
   size_t offset_ = 0;
   bool failed_ = false;
@@ -344,6 +345,16 @@ class UploaderWorker {
     if (wifiAvailable_) {
       WiFi.persistent(false);
       WiFi.mode(WIFI_STA);
+      const wifi_ps_type_t previousWifiSleep = WiFi.getSleep();
+      const bool wifiSleepChanged = WiFi.setSleep(false);
+      wifi_ps_type_t actualWifiSleep = WIFI_PS_MIN_MODEM;
+      const esp_err_t wifiSleepRead = esp_wifi_get_ps(&actualWifiSleep);
+      if ((!wifiSleepChanged && previousWifiSleep != WIFI_PS_NONE) ||
+          wifiSleepRead != ESP_OK || actualWifiSleep != WIFI_PS_NONE) {
+        Serial.println("EVENT,wifi,power_save,disable_failed");
+      } else {
+        Serial.println("EVENT,wifi,power_save,disabled");
+      }
       WiFi.setAutoReconnect(true);
     } else {
       Serial.println("EVENT,uploader,not_provisioned");
@@ -495,9 +506,9 @@ class UploaderWorker {
   }
 
   bool beginTelemetryRequest(const char* url, uint16_t timeoutMs) {
-    // Streamed LittleFS bodies use their own persistent connection so a send
-    // stall cannot contaminate the bounded control/health/log transport. This
-    // session is serialized by the same worker and reuses only its own socket.
+    // Buffered telemetry bodies use their own persistent connection so an
+    // ordinary request failure cannot contaminate the bounded control/health/
+    // log transport. A proven path-level failure still recycles both sessions.
     telemetryHttp_.setConnectTimeout(3000);
     telemetryHttp_.setTimeout(timeoutMs);
     telemetryHttp_.useHTTP10(false);
@@ -575,10 +586,16 @@ class UploaderWorker {
     }
     // Any complete response, or even a received HTTP status whose body we
     // reject, proves that the backend TCP path is alive and clears stale
-    // shared-session failure history. A negative telemetry transport error is
-    // isolated here; shared operations retain responsibility for Wi-Fi recycle.
+    // path-level failure history. Negative telemetry transport errors feed the
+    // same cooldown-limited Wi-Fi recovery policy as bounded operations.
     if (responseFullyConsumed || status >= HTTP_CODE_CONTINUE) {
       backendTransportRecovery_.recordSuccess();
+      return;
+    }
+    const BackendTransportRecoveryDecision decision =
+        backendTransportRecovery_.recordFailure(monotonicMillis(), status);
+    if (decision.shouldRecycle) {
+      recycleBackendTransport(status, decision.failureCount);
     }
   }
 
@@ -3156,9 +3173,9 @@ class UploaderWorker {
       return;
     }
 
-    TelemetryRecord records[kMaxFirmwareBatchSize] = {};
+    TelemetryRecord records[kTelemetryUploadMaximumRecords] = {};
     size_t copiedCount = workerQueue->copyPrefix(
-        records, std::min(available, kMaxFirmwareBatchSize));
+        records, std::min(available, kTelemetryUploadMaximumRecords));
     if (copiedCount == 0) {
       return;
     }
@@ -3172,10 +3189,10 @@ class UploaderWorker {
         spoolCount_, freeBytes, criticalWaiting);
     const size_t requestedBatchSize =
         drainingCriticalReserve
-            ? kMaxFirmwareBatchSize
+            ? kTelemetryUploadMaximumRecords
             : std::max<size_t>(
                   1, std::min<size_t>(activeConfig_.uploadBatchSize,
-                                      kMaxFirmwareBatchSize));
+                                      kTelemetryUploadMaximumRecords));
     copiedCount = std::min(copiedCount, requestedBatchSize);
 
     const size_t recordCount =
@@ -3745,8 +3762,8 @@ class UploaderWorker {
       return true;
     }
     const size_t envelopeSize = envelope.size();
-    envelope.close();
     if (envelopeSize == 0) {
+      envelope.close();
       // A zero-byte immutable envelope can never become uploadable. Preserve
       // it for diagnosis without letting it block every later spool forever.
       if (moveToDeadLetter(metadata, 0)) {
@@ -3762,6 +3779,51 @@ class UploaderWorker {
       }
       return true;
     }
+    if (metadata.recordCount > kTelemetryUploadMaximumRecords ||
+        envelopeSize > kTelemetryUploadMaximumPayloadBytes) {
+      envelope.close();
+      if (moveToDeadLetter(metadata, HTTP_CODE_PAYLOAD_TOO_LARGE)) {
+        telemetryAckResult_ = HealthOperationResult::kRejected;
+        clearTelemetryConflictProbe(metadata.batchId);
+        Serial.printf("EVENT,uploader,dead_letter_oversize,%s,%u,%u\n",
+                      metadata.batchId,
+                      static_cast<unsigned>(metadata.recordCount),
+                      static_cast<unsigned>(envelopeSize));
+        resetBackoff(now);
+      } else {
+        Serial.printf("EVENT,uploader,dead_letter_oversize_failed,%s\n",
+                      metadata.batchId);
+        scheduleBackoff(now);
+      }
+      return true;
+    }
+
+    // Keep the upload buffer off the 16 KiB uploader stack and allocate only
+    // the immutable envelope's exact bounded size. Read and close LittleFS
+    // before opening the HTTP request so flash I/O cannot interleave with the
+    // ESP32 TCP write path. The buffer is released immediately after send.
+    std::unique_ptr<uint8_t[]> payload(
+        new (std::nothrow) uint8_t[envelopeSize]);
+    if (!payload) {
+      envelope.close();
+      Serial.printf("EVENT,uploader,payload_alloc_failed,%s,%u\n",
+                    metadata.batchId,
+                    static_cast<unsigned>(envelopeSize));
+      scheduleBackoff(now);
+      return true;
+    }
+    feedWatchdog();
+    const size_t payloadBytesRead = envelope.read(payload.get(), envelopeSize);
+    envelope.close();
+    feedWatchdog();
+    if (payloadBytesRead != envelopeSize) {
+      Serial.printf("EVENT,uploader,payload_read_failed,%s,%u,%u\n",
+                    metadata.batchId,
+                    static_cast<unsigned>(payloadBytesRead),
+                    static_cast<unsigned>(envelopeSize));
+      scheduleBackoff(now);
+      return true;
+    }
 
     char url[224] = {};
     const int urlLength =
@@ -3775,9 +3837,9 @@ class UploaderWorker {
       return true;
     }
 
-    // Unlike the bounded RAM requests above, this request alternates LittleFS
-    // reads with socket writes. Its dedicated keep-alive session isolates a
-    // transient lwIP send stall without imposing a fixed backlog drain rate.
+    // The bounded RAM payload uses a dedicated keep-alive session. This keeps
+    // normal request failures isolated while preserving unrestricted backlog
+    // drain; negative transport errors still feed path-level Wi-Fi recovery.
     if (!beginTelemetryRequest(url, 5000)) {
       scheduleBackoff(now);
       return true;
@@ -3786,8 +3848,11 @@ class UploaderWorker {
     http.addHeader("Content-Type", "application/json");
     http.setAuthorizationType("Bearer");
     http.setAuthorization(workerSettings.apiToken);
-    ReopeningLittleFsReadStream body(metadata.path, envelopeSize);
+    feedWatchdog();
+    WatchdogFeedingMemoryReadStream body(payload.get(), envelopeSize);
     const int status = http.sendRequest("POST", &body, envelopeSize);
+    feedWatchdog();
+    payload.reset();
 
     if (status == HTTP_CODE_OK && body.complete()) {
       String response;

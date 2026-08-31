@@ -2,8 +2,28 @@
 
 #include <limits>
 
+bool backendTransportStatusIsRecoverable(int status) {
+  switch (status) {
+    case -1:   // connection refused
+    case -2:   // send header failed
+    case -3:   // send payload failed
+    case -4:   // not connected
+    case -5:   // connection lost
+    case -11:  // read timeout
+      return true;
+    default:
+      return false;
+  }
+}
+
 BackendTransportRecoveryDecision
 BackendTransportRecoveryPolicy::recordFailure(uint64_t nowMs, int status) {
+  if (!backendTransportStatusIsRecoverable(status)) {
+    BackendTransportRecoveryDecision decision = {};
+    decision.failureCount = consecutiveFailureCount_;
+    decision.cooldownRemainingMs = cooldownRemainingMs(nowMs);
+    return decision;
+  }
   if (consecutiveFailureCount_ != std::numeric_limits<uint8_t>::max()) {
     ++consecutiveFailureCount_;
   }

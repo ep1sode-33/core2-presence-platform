@@ -41,15 +41,16 @@ The hardware loop never performs network or flash I/O. Once per second it
 publishes an immutable aggregate sample to a bounded queue; state transitions
 publish immediately. A lower-priority worker batches records and uploads them.
 Authenticated control, health, log, and bounded-payload operations share that
-worker's serialized HTTP/1.1 keep-alive session. Streamed telemetry has a second
+worker's serialized HTTP/1.1 keep-alive session. Buffered telemetry has a second
 dedicated persistent HTTP/1.1 session, and each request contains up to thirty
-records. Its body is copied from LittleFS into bounded RAM chunks with the file
-closed before each socket write, so flash and TCP progress do not hold one
-another's resources or wedge the control transport. Successful responses are
-completely consumed before reuse; a transport failure, non-success HTTP
-response, or partial response closes only the affected session, then retries
-the immutable envelope on a clean socket. This preserves full configured
-backlog throughput without churning a new TCP connection per request.
+records under a defensive 14 KiB ceiling. The exact-sized body is copied into
+temporary heap RAM and LittleFS is closed before the request begins, so flash
+and TCP progress do not hold one another's resources or wedge the control
+transport. Successful responses are completely consumed before reuse; normal
+request failure, non-success HTTP response, or partial response closes the
+affected session, then retries the immutable envelope on a clean socket. This
+preserves full configured backlog throughput without churning a new TCP
+connection per request.
 
 Microphone electrical/timing health is also hysteretic: 60 consecutive bad
 sample windows (about one second) are required to enter `degraded`; eight
@@ -261,11 +262,16 @@ semantics and destroy the known-good rollback invariant.
 
 The serialized bounded-operation HTTP connection also has a transport circuit
 breaker. A send-payload failure, or three consecutive transport failures,
-closes both sessions and recycles the station connection. A streamed telemetry
-failure closes only its dedicated socket and retries the immutable envelope;
-control/health traffic remains responsible for confirming a path-wide outage.
-A 60-second cooldown prevents a real devb outage from continuously resetting
-otherwise healthy Wi-Fi.
+closes both sessions and recycles the station connection. Telemetry transport
+failures feed that same path policy: an ordinary failed request first closes
+its dedicated socket and retries the immutable envelope, while status `-3`
+requests immediate cooldown-limited recovery and other negative network
+statuses reach recovery after three consecutive failures. Local allocation,
+encoding, and stream errors never count as a broken Wi-Fi path. A 60-second
+cooldown prevents a real devb outage from continuously resetting otherwise
+healthy Wi-Fi. Station
+modem sleep is disabled and verified once at startup to prevent power-save from
+turning a healthy high-signal link into long lwIP send stalls.
 
 ## Hardware invariants
 

@@ -20,8 +20,15 @@ BACKLOG = 2048
 
 def create_listener(host: str) -> socket.socket:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Linux accepted sockets inherit these listener options. Bound stale
+        # peers that stop acknowledging while Uvicorn is still waiting for an
+        # incomplete request body; this is not an HTTP request-body timeout.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+        listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
         listener.bind((host, PORT))
         listener.listen(BACKLOG)
     except Exception:
@@ -33,7 +40,8 @@ def create_listener(host: str) -> socket.socket:
 def main() -> None:
     listeners: list[socket.socket] = []
     try:
-        listeners = [create_listener(host) for host in LISTEN_ADDRESSES]
+        for host in LISTEN_ADDRESSES:
+            listeners.append(create_listener(host))
     except Exception:
         for listener in listeners:
             listener.close()
@@ -45,7 +53,7 @@ def main() -> None:
             log_level="info",
             proxy_headers=False,
             # The device keeps separate HTTP/1.1 sessions for five-second
-            # bounded operations and streamed telemetry batches. The normal
+            # bounded operations and buffered telemetry batches. The normal
             # telemetry cadence is thirty seconds, so keep both server sides
             # open well beyond that interval rather than racing the idle edge.
             timeout_keep_alive=90,

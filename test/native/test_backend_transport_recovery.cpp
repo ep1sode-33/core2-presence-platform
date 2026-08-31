@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 
 #include "backend_transport_recovery.h"
@@ -115,6 +116,25 @@ void testTimestampRegressionRetainsCooldown() {
          kBackendTransportRecycleCooldownMs);
 }
 
+void testLocalHttpClientErrorsDoNotRecycleWifi() {
+  for (const int status : {-6, -7, -8, -9, -10, 0, 500}) {
+    BackendTransportRecoveryPolicy policy;
+    for (unsigned attempt = 0; attempt < 5; ++attempt) {
+      const BackendTransportRecoveryDecision decision =
+          policy.recordFailure(attempt, status);
+      assert(!decision.shouldRecycle);
+      assert(!decision.blockedByCooldown);
+      assert(decision.failureCount == 0);
+    }
+    assert(policy.consecutiveFailureCount() == 0);
+    assert(!policy.recoveryPending());
+  }
+
+  for (const int status : {-1, -2, -3, -4, -5, -11}) {
+    assert(backendTransportStatusIsRecoverable(status));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -127,4 +147,5 @@ int main() {
   testSuccessClearsPendingButNotCooldown();
   testFailureCountSaturates();
   testTimestampRegressionRetainsCooldown();
+  testLocalHttpClientErrorsDoNotRecycleWifi();
 }

@@ -6,6 +6,11 @@ inline constexpr uint8_t kBackendTransportFailureThreshold = 3;
 inline constexpr int kBackendTransportImmediateRecycleStatus = -3;
 inline constexpr uint64_t kBackendTransportRecycleCooldownMs = 60ULL * 1000ULL;
 
+// Arduino HTTPClient reports local serialization/allocation failures with the
+// same negative integer channel as socket failures. Only codes that establish
+// a broken backend network path may contribute to station recovery.
+bool backendTransportStatusIsRecoverable(int status);
+
 struct BackendTransportRecoveryDecision {
   bool shouldRecycle = false;
   bool blockedByCooldown = false;

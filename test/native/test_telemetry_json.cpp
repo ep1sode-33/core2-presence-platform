@@ -1,10 +1,13 @@
+#include <array>
 #include <cassert>
-#include <cstdlib>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 
 #include "telemetry_json.h"
+#include "telemetry_upload_limits.h"
 
 namespace {
 
@@ -126,5 +129,51 @@ int main() {
   records[1].sample.noiseFloor = 999999936.0f;
   records[1].sample.soundThreshold = 999999936.0f;
   assert(writeTelemetryBatchJson(validContext, records, 2, sink));
+
+  constexpr uint64_t kMaximumSigned64 =
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+  std::array<TelemetryRecord, kTelemetryUploadMaximumRecords> maximumRecords =
+      {};
+  for (size_t index = 0; index < maximumRecords.size(); ++index) {
+    TelemetryRecord& record = maximumRecords[index];
+    record.kind = TelemetryKind::kTransition;
+    record.seq = kMaximumSigned64 - index;
+    record.uptimeMs = kMaximumSigned64;
+    record.appliedConfigRevision = kMaximumSigned64;
+    record.transition.hasFromState = true;
+    record.transition.fromState = PresenceState::kCalibrating;
+    record.transition.toState = PresenceState::kCalibrating;
+    record.transition.reason = TransitionReason::kCalibrationComplete;
+    record.transition.pir = false;
+    record.transition.pirAgeMs = kMaximumSigned64;
+    record.transition.soundActive = false;
+    record.transition.soundAgeMs = kMaximumSigned64;
+    record.transition.micEnvelope = 1000000000.0f;
+    record.transition.noiseFloor = 1000000000.0f;
+    record.transition.soundThreshold = 1000000000.0f;
+    record.transition.brightnessBefore = 255;
+    record.transition.brightnessAfter = 255;
+  }
+
+  const std::string maximumBatchId(96, '\x01');
+  const std::string maximumBootId(64, '\x01');
+  const std::string maximumFirmwareVersion(64, '\x01');
+  const std::string maximumBuildId(64, '\x01');
+  TelemetryBatchContext maximumContext = {};
+  maximumContext.batchId = maximumBatchId.c_str();
+  maximumContext.bootId = maximumBootId.c_str();
+  maximumContext.firmwareVersion = maximumFirmwareVersion.c_str();
+  maximumContext.buildId = maximumBuildId.c_str();
+  maximumContext.appliedConfigRevision = kMaximumSigned64;
+  maximumContext.hasClockAnchor = true;
+  maximumContext.anchorUtcMs = kMaximumSigned64;
+  maximumContext.anchorUptimeMs = kMaximumSigned64;
+  maximumContext.anchorSource = ClockAnchorSource::kSntp;
+
+  output.clear();
+  assert(writeTelemetryBatchJson(maximumContext, maximumRecords.data(),
+                                 maximumRecords.size(), sink));
+  assert(output.size() == 14083);
+  assert(output.size() <= kTelemetryUploadMaximumPayloadBytes);
   return 0;
 }

@@ -8,6 +8,85 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "serve_presence_api.py"
 
 
 class ServePresenceApiConfigurationTests(unittest.TestCase):
+    def test_listener_boundary_and_explicit_socket_wiring(self) -> None:
+        tree = ast.parse(SCRIPT_PATH.read_text(encoding="utf-8"))
+        getenv_defaults = {}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "os"
+                and node.func.attr == "getenv"
+                and len(node.args) == 2
+            ):
+                getenv_defaults[ast.literal_eval(node.args[0])] = ast.literal_eval(
+                    node.args[1]
+                )
+        self.assertEqual(
+            getenv_defaults,
+            {
+                "PRESENCE_LISTEN_ADDRESSES": "100.117.242.46,192.168.0.46",
+                "PRESENCE_PORT": "8081",
+            },
+        )
+
+        run_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "run"
+        ]
+        self.assertEqual(len(run_calls), 1)
+        sockets_keywords = [
+            keyword
+            for keyword in run_calls[0].keywords
+            if keyword.arg == "sockets"
+        ]
+        self.assertEqual(len(sockets_keywords), 1)
+        self.assertIsInstance(sockets_keywords[0].value, ast.Name)
+        self.assertEqual(sockets_keywords[0].value.id, "listeners")
+
+    def test_listener_enables_bounded_tcp_keepalive(self) -> None:
+        tree = ast.parse(SCRIPT_PATH.read_text(encoding="utf-8"))
+        create_listener_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "create_listener"
+        ]
+        self.assertEqual(len(create_listener_functions), 1)
+
+        socket_options = []
+        for node in ast.walk(create_listener_functions[0]):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "listener"
+                and node.func.attr == "setsockopt"
+            ):
+                self.assertEqual(len(node.args), 3)
+                socket_options.append(
+                    (
+                        ast.unparse(node.args[0]),
+                        ast.unparse(node.args[1]),
+                        ast.literal_eval(node.args[2]),
+                    )
+                )
+
+        self.assertCountEqual(
+            socket_options,
+            [
+                ("socket.SOL_SOCKET", "socket.SO_REUSEADDR", 1),
+                ("socket.SOL_SOCKET", "socket.SO_KEEPALIVE", 1),
+                ("socket.IPPROTO_TCP", "socket.TCP_KEEPIDLE", 60),
+                ("socket.IPPROTO_TCP", "socket.TCP_KEEPINTVL", 10),
+                ("socket.IPPROTO_TCP", "socket.TCP_KEEPCNT", 3),
+            ],
+        )
+
     def test_uvicorn_transport_timeouts_and_proxy_boundary(self) -> None:
         tree = ast.parse(SCRIPT_PATH.read_text(encoding="utf-8"))
         config_calls = [

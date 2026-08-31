@@ -4,10 +4,17 @@ The presence API is installed at `/opt/m5-presence`, keeps its SQLite database
 in `/var/lib/m5-presence`, and listens only on `192.168.0.46:8081` plus
 `100.117.242.46:8081`. The existing environmental API on port 8080 is not part
 of this unit. Uvicorn's keep-alive timeout is 90 seconds so the M5GO's separate
-five-second bounded-operation and normally thirty-second streamed-telemetry
+five-second bounded-operation and normally thirty-second buffered-telemetry
 HTTP/1.1 sessions can both remain persistent without racing an idle timeout.
 Graceful shutdown is bounded to 30 seconds so a persistent device connection
 cannot stall a service restart until systemd's outer stop timeout.
+The two listener sockets also enable TCP keepalive with a 60-second idle time,
+10-second probe interval, and three failed probes. Linux passes those options
+to accepted sockets, so a half-body peer that stops responding is normally
+removed after roughly 80--90 seconds instead of retaining a socket and ASGI
+task indefinitely. This is transport-level dead-peer cleanup, not an HTTP body
+timeout: a peer that continues acknowledging TCP while never completing its
+declared body is not expired by these settings.
 
 From an unpacked repository checkout on a first deployment:
 
