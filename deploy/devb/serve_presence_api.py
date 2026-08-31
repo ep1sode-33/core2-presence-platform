@@ -49,6 +49,9 @@ def main() -> None:
             # side open comfortably beyond that cadence so a normal poll does
             # not race Uvicorn's five-second default timeout.
             timeout_keep_alive=30,
+            # A persistent device connection must not hold a deployment in
+            # graceful shutdown until systemd's much longer stop timeout.
+            timeout_graceful_shutdown=30,
         )
     ).run(sockets=listeners)
 
