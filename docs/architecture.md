@@ -49,12 +49,13 @@ before each socket write, so flash and TCP progress do not hold one another's
 resources. This keeps the five-second control poll from exhausting the ESP32's
 bounded TCP PCB pool with HTTP/1.0 `TIME_WAIT` connections.
 
-Microphone electrical/timing health is also hysteretic: three consecutive bad
-sample windows are required to enter `degraded`; eight consecutive bad windows
-ending in a hard-fault classification enter `fault`; and 24 healthy windows
-recover. One Wi-Fi interrupt or scheduler outlier therefore cannot generate a
-health/log feedback loop, while persistent sensor faults remain visible
-quickly.
+Microphone electrical/timing health is also hysteretic: 60 consecutive bad
+sample windows (about one second) are required to enter `degraded`; eight
+consecutive hard-fault windows enter `fault`; and 120 healthy windows (about two
+seconds) recover. A degraded classification never primes the independent
+hard-fault counter. One Wi-Fi interrupt or scheduler outlier therefore cannot
+generate a health/log feedback loop, while a stuck/railed sensor still enters
+PIR-only mode quickly.
 
 Every boot gets a random `boot_id`. Every sample and transition within that boot
 gets a single increasing `seq`. The backend identity is therefore

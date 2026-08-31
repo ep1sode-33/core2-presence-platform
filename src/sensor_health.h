@@ -25,8 +25,8 @@ class SensorHealthLatch {
   // interrupt. Require consecutive bad windows before surfacing degradation,
   // then use a longer healthy run to recover and avoid status chatter.
   explicit SensorHealthLatch(uint8_t badWindowsToFault = 8,
-                             uint8_t goodWindowsToRecover = 24,
-                             uint8_t badWindowsToDegraded = 3)
+                             uint8_t goodWindowsToRecover = 120,
+                             uint8_t badWindowsToDegraded = 60)
       : badWindowsToFault_(badWindowsToFault),
         goodWindowsToRecover_(goodWindowsToRecover),
         badWindowsToDegraded_(badWindowsToDegraded) {}
@@ -36,9 +36,10 @@ class SensorHealthLatch {
 
  private:
   uint8_t badWindowsToFault_ = 8;
-  uint8_t goodWindowsToRecover_ = 24;
-  uint8_t badWindowsToDegraded_ = 3;
+  uint8_t goodWindowsToRecover_ = 120;
+  uint8_t badWindowsToDegraded_ = 60;
   uint8_t badWindows_ = 0;
+  uint8_t hardFaultWindows_ = 0;
   uint8_t goodWindows_ = 0;
   SensorHealthStatus status_ = SensorHealthStatus::kUnknown;
 };

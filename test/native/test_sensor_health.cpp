@@ -55,6 +55,45 @@ int main() {
   assert(transientLatch.observe(SensorHealthStatus::kHealthy) ==
          SensorHealthStatus::kHealthy);
 
+  SensorHealthLatch defaultLatch;
+  assert(defaultLatch.observe(SensorHealthStatus::kHealthy) ==
+         SensorHealthStatus::kHealthy);
+  for (int i = 0; i < 59; ++i) {
+    assert(defaultLatch.observe(SensorHealthStatus::kDegraded) ==
+           SensorHealthStatus::kHealthy);
+  }
+  assert(defaultLatch.observe(SensorHealthStatus::kDegraded) ==
+         SensorHealthStatus::kDegraded);
+  for (int i = 0; i < 119; ++i) {
+    assert(defaultLatch.observe(SensorHealthStatus::kHealthy) ==
+           SensorHealthStatus::kDegraded);
+  }
+  assert(defaultLatch.observe(SensorHealthStatus::kHealthy) ==
+         SensorHealthStatus::kHealthy);
+
+  SensorHealthLatch mixedFailureLatch(8, 2, 3);
+  assert(mixedFailureLatch.observe(SensorHealthStatus::kHealthy) ==
+         SensorHealthStatus::kHealthy);
+  for (int i = 0; i < 7; ++i) {
+    mixedFailureLatch.observe(SensorHealthStatus::kDegraded);
+  }
+  assert(mixedFailureLatch.observe(SensorHealthStatus::kFault) ==
+         SensorHealthStatus::kDegraded);
+  assert(mixedFailureLatch.observe(SensorHealthStatus::kDegraded) ==
+         SensorHealthStatus::kDegraded);
+  for (int i = 0; i < 7; ++i) {
+    assert(mixedFailureLatch.observe(SensorHealthStatus::kFault) ==
+           SensorHealthStatus::kDegraded);
+  }
+  assert(mixedFailureLatch.observe(SensorHealthStatus::kDegraded) ==
+         SensorHealthStatus::kDegraded);
+  for (int i = 0; i < 7; ++i) {
+    assert(mixedFailureLatch.observe(SensorHealthStatus::kFault) ==
+           SensorHealthStatus::kDegraded);
+  }
+  assert(mixedFailureLatch.observe(SensorHealthStatus::kFault) ==
+         SensorHealthStatus::kFault);
+
   PirHealthTracker pir;
   assert(pir.observe(false, 1000) == SensorHealthStatus::kHealthy);
   assert(pir.observe(true, 2000) == SensorHealthStatus::kHealthy);

@@ -44,6 +44,7 @@ SensorHealthStatus SensorHealthLatch::observe(
     SensorHealthStatus windowStatus) {
   if (windowStatus == SensorHealthStatus::kHealthy) {
     badWindows_ = 0;
+    hardFaultWindows_ = 0;
     incrementSaturated(goodWindows_);
     if (status_ == SensorHealthStatus::kUnknown ||
         goodWindows_ >= goodWindowsToRecover_) {
@@ -54,8 +55,15 @@ SensorHealthStatus SensorHealthLatch::observe(
 
   goodWindows_ = 0;
   incrementSaturated(badWindows_);
-  if (windowStatus == SensorHealthStatus::kFault &&
-      badWindows_ >= badWindowsToFault_) {
+  if (windowStatus == SensorHealthStatus::kFault) {
+    incrementSaturated(hardFaultWindows_);
+  } else {
+    // A degraded classification must not prime the hard-fault latch. Requiring
+    // consecutive hard-fault windows keeps PIR-only failover fast without
+    // allowing one rail/repeat outlier to inherit a degraded streak.
+    hardFaultWindows_ = 0;
+  }
+  if (hardFaultWindows_ >= badWindowsToFault_) {
     status_ = SensorHealthStatus::kFault;
   } else if (status_ != SensorHealthStatus::kFault &&
              badWindows_ >= badWindowsToDegraded_) {
