@@ -5,11 +5,15 @@
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_spi_flash.h>
 #endif
 
 namespace {
 
 #if defined(ARDUINO_ARCH_ESP32)
+static_assert(kOtaMaximumWriteChunkSize <= SPI_FLASH_SEC_SIZE,
+              "OTA writes must touch at most one new erase sector");
+
 struct Esp32OtaContext {
   esp_ota_handle_t handle = 0;
   const esp_partition_t* partition = nullptr;
@@ -25,8 +29,17 @@ bool esp32UpdateBegin(void* rawContext, uint32_t imageSize) {
   }
   context->partition = esp_ota_get_next_update_partition(nullptr);
   context->handle = 0;
-  if (context->partition == nullptr ||
-      esp_ota_begin(context->partition, imageSize, &context->handle) != ESP_OK) {
+  if (context->partition == nullptr || imageSize == 0 ||
+      imageSize > context->partition->size) {
+    context->partition = nullptr;
+    return false;
+  }
+  // A known image size asks ESP-IDF to erase the full target range inside
+  // esp_ota_begin(), which stalls the other core long enough to violate the
+  // measured input/sampling safety gate. Our authenticated stream is strictly
+  // sequential, so erase at most one newly touched sector per bounded write.
+  if (esp_ota_begin(context->partition, OTA_WITH_SEQUENTIAL_WRITES,
+                    &context->handle) != ESP_OK) {
     context->partition = nullptr;
     return false;
   }

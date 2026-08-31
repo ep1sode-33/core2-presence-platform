@@ -237,11 +237,13 @@ commands are never removed by history retention.
 Production OTA streams only the inactive application slot. Before writing, the
 firmware validates the fixed hardware identifier, monotonic counter, canonical
 manifest, and ECDSA P-256 signature against its compiled current/next public
-keys. It verifies the final byte count and SHA-256, then leaves the image in
-pending-verification state until 30 seconds of healthy local runtime. Wi-Fi or
-devb loss is a soft condition; failed local boot gates request bootloader
-rollback. Development OTA is separately protected by a per-device secret and
-exists only in a physically opened 120-second LAN window.
+keys. The sequential stream erases incrementally with each bounded flash write
+instead of pausing the main loop for one bulk erase. It verifies the final byte
+count and SHA-256, then leaves the image in pending-verification state until 30
+seconds of healthy local runtime. Wi-Fi or devb loss is a soft condition;
+failed local boot gates request bootloader rollback. Development OTA is
+separately protected by a per-device secret and exists only in a physically
+opened 120-second LAN window.
 
 ## Hardware invariants
 

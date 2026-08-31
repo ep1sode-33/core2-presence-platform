@@ -70,6 +70,10 @@ healthy local main-loop, worker, storage, filesystem, and display operation.
 An early hard failure requests bootloader rollback. Temporary Wi-Fi, devb,
 weather, or optional-sensor loss is not a rollback gate.
 
+An interrupted sequential update can leave the inactive slot partly erased or
+written, but it does not change the current boot selection. The next production
+OTA starts again at offset zero and incrementally overwrites that inactive slot.
+
 ## Bootloader or partition-table changes
 
 These changes are never distributed over OTA. Review the new offsets against

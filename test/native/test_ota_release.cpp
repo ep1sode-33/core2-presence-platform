@@ -46,7 +46,8 @@ std::vector<uint8_t> canonicalManifest() {
 
 OtaReleaseValidationResult validate(uint64_t currentCounter = 6,
                                     const char* hardware =
-                                        "m5go-classic-esp32-16m") {
+                                        "m5go-classic-esp32-16m",
+                                    uint32_t maximumImageSize = 0x640000) {
   const std::vector<uint8_t> manifest = canonicalManifest();
   uint8_t signature[kOtaP256SignatureSize] = {};
   signature[31] = 1;
@@ -56,7 +57,7 @@ OtaReleaseValidationResult validate(uint64_t currentCounter = 6,
   key.publicKey[0] = 0x04;
   return validateOtaRelease(manifest.data(), manifest.size(), signature,
                             sizeof(signature), &key, 1, hardware,
-                            currentCounter, 0x640000, fakeVerifier);
+                            currentCounter, maximumImageSize, fakeVerifier);
 }
 
 void testReleasePolicyAndTrust() {
@@ -70,6 +71,11 @@ void testReleasePolicyAndTrust() {
   assert(validate(8).error == OtaReleaseValidationError::kReleaseNotNewer);
   assert(validate(6, "core2").error ==
          OtaReleaseValidationError::kHardwareMismatch);
+  assert(validate(6, "m5go-classic-esp32-16m", 0).error ==
+         OtaReleaseValidationError::kImageTooLarge);
+  assert(validate(6, "m5go-classic-esp32-16m", 2).error ==
+         OtaReleaseValidationError::kImageTooLarge);
+  assert(validate(6, "m5go-classic-esp32-16m", 3).ok());
 
   rejectSignature = true;
   const OtaReleaseValidationResult rejected = validate();
@@ -177,6 +183,17 @@ void testStreamedUpdateRejectsOversizedChunks() {
   assert(backend.aborted);
 }
 
+void testStreamedUpdateRejectsImageLengthOverflow() {
+  const OtaVerifiedRelease release = validate().release;
+  FakeUpdateBackend backend;
+  OtaStreamUpdater updater;
+  assert(updater.begin(release, callbacks(backend)));
+  assert(!updater.write(reinterpret_cast<const uint8_t*>("abcd"), 4));
+  assert(updater.error() == OtaUpdateError::kImageLengthOverflow);
+  assert(backend.aborted);
+  assert(backend.size == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -184,5 +201,6 @@ int main() {
   testStreamedUpdateVerifiesBeforeFinalize();
   testStreamedUpdateRejectsCorruptionAndPartialWrites();
   testStreamedUpdateRejectsOversizedChunks();
+  testStreamedUpdateRejectsImageLengthOverflow();
   return 0;
 }
