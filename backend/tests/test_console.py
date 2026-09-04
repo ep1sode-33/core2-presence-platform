@@ -62,6 +62,7 @@ def test_console_display_is_chinese_without_changing_wire_values(
     ) as client:
         page = client.get("/console").text
         script = client.get("/console/assets/console.js").text
+        stylesheet = client.get("/console/assets/console.css").text
 
     for text in (
         '<html lang="zh-CN">',
@@ -142,6 +143,11 @@ def test_console_display_is_chinese_without_changing_wire_values(
     # interpolated into the localized message shown by the console.
     assert "error.detail = responseDetail" in script
     assert "detail +=" not in script
+
+    # Chinese labels must still fit the single-column narrow-screen layout.
+    assert '"PingFang SC"' in stylesheet
+    assert "grid-template-columns: minmax(0, 1fr);" in stylesheet
+    assert "min-width: 0;" in stylesheet
 
 
 def test_console_data_uses_lan_source_while_existing_api_keeps_bearer_auth(

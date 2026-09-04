@@ -55,6 +55,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 input, select {
   min-height: 2.6rem;
+  min-width: 0;
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 0.55rem;
@@ -128,6 +129,7 @@ h2 { margin-bottom: 0.25rem; font-size: 1.15rem; letter-spacing: -0.015em; }
 
 main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   width: min(1440px, calc(100% - 2rem));
   margin: 0 auto;
@@ -230,18 +232,18 @@ dialog::backdrop { background: rgb(3 7 11 / 78%); backdrop-filter: blur(5px); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 0.7rem; }
 
 @media (max-width: 900px) {
-  .two-column { grid-template-columns: 1fr; }
+  .two-column { grid-template-columns: minmax(0, 1fr); }
   .toolbar { grid-template-columns: 1fr 1fr auto; }
   .message { grid-column: 1 / -1; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .config-form { grid-template-columns: 1fr 1fr; }
-  .ops-controls, .command-controls { grid-template-columns: 1fr; }
+  .ops-controls, .command-controls { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 580px) {
   .site-header { align-items: flex-start; }
   .connection-state { margin-top: 0.35rem; }
-  .toolbar, .metric-grid, .config-form { grid-template-columns: 1fr; }
+  .toolbar, .metric-grid, .config-form { grid-template-columns: minmax(0, 1fr); }
   .toolbar button { width: 100%; }
   .message, .form-actions { grid-column: auto; }
   .form-actions { align-items: stretch; flex-direction: column; }
