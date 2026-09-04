@@ -36,7 +36,9 @@ Host and the explicitly configured Mac at `100.118.9.99/32` through devb's
 Tailnet Host. Each source is paired with its own literal Host; mutations also
 require an exact same-origin browser request. Forwarded client headers are
 never trusted. The existing device API under `/v1/devices/...` remains
-bearer-authenticated.
+bearer-authenticated. Console navigation, controls, status labels, and prompts
+are presented in Simplified Chinese; API keys, wire enums, identifiers, and raw
+diagnostic records remain in their original English machine format.
 
 v0.7 also records bounded device-health history and explainable transition
 evidence, transports idempotent one-shot control commands, retains structured

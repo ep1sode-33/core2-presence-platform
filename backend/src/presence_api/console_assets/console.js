@@ -10,6 +10,137 @@ const INTEGER_CONFIG_FIELDS = new Set([
   "upload_batch_size",
 ]);
 
+const UI_LABELS = Object.freeze({
+  configField: Object.freeze({
+    minimum_on_ms: "最短亮屏时间（毫秒）",
+    pir_hold_ms: "PIR 保持时间（毫秒）",
+    sound_hold_ms: "声音保持时间（毫秒）",
+    max_sound_bridge_ms: "最大声音续接时间（毫秒）",
+    cooldown_ms: "冷却时间（毫秒）",
+    sound_factor: "声音阈值系数",
+    telemetry_interval_ms: "遥测间隔（毫秒）",
+    upload_batch_size: "上传批量大小",
+  }),
+  presenceState: Object.freeze({
+    calibrating: "校准中",
+    idle: "无人",
+    present: "有人",
+    cooldown: "冷却中",
+  }),
+  transitionReason: Object.freeze({
+    boot: "启动",
+    calibration_complete: "校准完成",
+    pir_motion: "PIR 检测到动作",
+    sound_bridge: "声音桥接延续",
+    quiet_timeout: "安静超时",
+    cooldown_timeout: "冷却超时",
+    touch_wake: "触摸唤醒",
+    bench_override: "台架测试覆盖",
+    config_change: "配置变更",
+    unknown: "未知",
+  }),
+  configSync: Object.freeze({
+    unknown: "未知",
+    in_sync: "已同步",
+    pending: "待同步",
+    regressed: "版本回退",
+    divergent: "状态不一致",
+  }),
+  healthLevel: Object.freeze({
+    healthy: "正常",
+    degraded: "降级",
+    action_required: "需要处理",
+    unknown: "未知",
+  }),
+  sensorHealth: Object.freeze({
+    healthy: "正常",
+    degraded: "降级",
+    fault: "故障",
+    unknown: "未知",
+  }),
+  releasePhase: Object.freeze({
+    idle: "空闲",
+    downloading: "下载中",
+    verifying: "验证中",
+    reboot_pending: "等待重启",
+    validating: "启动验证中",
+    running: "运行中",
+    failed: "失败",
+    rejected: "已拒绝",
+    rolled_back: "已回滚",
+  }),
+  rollbackOutcome: Object.freeze({
+    none: "无",
+    not_needed: "无需回滚",
+    succeeded: "回滚成功",
+    failed: "回滚失败",
+    unknown: "未知",
+  }),
+  commandAction: Object.freeze({
+    diagnostic_snapshot: "捕获诊断快照",
+    set_log_level: "开启 10 分钟详细传感器日志",
+    recalibrate_microphone: "重新校准麦克风",
+    retry_upload: "立即重试上传",
+    reboot: "重启应用",
+    open_dev_ota: "请求需本机确认的开发 OTA 窗口",
+  }),
+  commandStatus: Object.freeze({
+    queued: "排队中",
+    leased: "已租约下发",
+    accepted: "已接受",
+    running: "执行中",
+    succeeded: "成功",
+    failed: "失败",
+    expired: "已过期",
+    rejected: "已拒绝",
+  }),
+  feedbackPresence: Object.freeze({
+    present: "有人",
+    absent: "无人",
+  }),
+  feedbackSource: Object.freeze({
+    touch: "触摸屏",
+    web: "网页",
+    api: "API",
+  }),
+  logLevel: Object.freeze({
+    debug: "调试",
+    info: "信息",
+    warning: "警告",
+    error: "错误",
+  }),
+  symbolicationStatus: Object.freeze({
+    matched_elf: "已匹配 ELF",
+    missing_elf: "缺少 ELF",
+    succeeded: "符号解析成功",
+    failed: "符号解析失败",
+  }),
+});
+
+const HTTP_ERROR_LABELS = Object.freeze({
+  400: "请求无效",
+  401: "身份验证失败",
+  403: "无权访问",
+  404: "未找到请求的资源",
+  409: "请求冲突",
+  413: "上传内容过大",
+  422: "提交内容无效",
+  429: "请求过于频繁",
+  500: "服务器内部错误",
+  502: "上游服务响应异常",
+  503: "服务暂时不可用",
+  504: "上游服务响应超时",
+});
+
+function labelFor(group, value) {
+  if (value == null) return "未知";
+  return UI_LABELS[group]?.[value] || String(value);
+}
+
+function httpErrorLabel(status) {
+  return HTTP_ERROR_LABELS[status] || "请求失败";
+}
+
 const elements = {
   device: document.querySelector("#deviceSelect"),
   hours: document.querySelector("#hoursSelect"),
@@ -109,21 +240,30 @@ function requestHeaders(includeJson = false) {
 }
 
 async function apiFetch(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: options.headers || requestHeaders(Boolean(options.body)),
-    cache: "no-store",
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: options.headers || requestHeaders(Boolean(options.body)),
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    throw new Error("网络请求失败，请检查连接后重试。", { cause: error });
+  }
   if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
+    let responseDetail = null;
     try {
       const body = await response.json();
-      if (body.detail) detail = body.detail;
+      responseDetail = body.detail ?? null;
     } catch (_error) {
-      // Preserve the HTTP status if the body is not JSON.
+      // 响应正文不是 JSON 时，没有额外的诊断数据可保留。
     }
-    const error = new Error(detail);
+    const error = new Error(`${httpErrorLabel(response.status)}（HTTP ${response.status}）`);
     error.status = response.status;
+    // Keep the backend's raw diagnostic payload available to developer tooling,
+    // but never mix it into the localized message rendered by the page.
+    error.detail = responseDetail;
     throw error;
   }
   return response.json();
@@ -131,21 +271,21 @@ async function apiFetch(path, options = {}) {
 
 function formatAge(milliseconds) {
   if (!Number.isFinite(milliseconds)) return "—";
-  if (milliseconds < 1_000) return "now";
+  if (milliseconds < 1_000) return "刚刚";
   const seconds = Math.floor(milliseconds / 1_000);
-  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 60) return `${seconds} 秒前`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return `${minutes} 分钟前`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 48) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
 }
 
 function formatEastern(milliseconds, withDate = false) {
   const options = withDate
     ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }
     : { hour: "2-digit", minute: "2-digit" };
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("zh-CN", {
     ...options,
     timeZone: "America/New_York",
     hour12: false,
@@ -164,14 +304,14 @@ function fillDeviceList(devices) {
   const previous = elements.device.value;
   elements.device.replaceChildren();
   if (!devices.length) {
-    const option = new Option("No devices found", "");
+    const option = new Option("未发现设备", "");
     elements.device.add(option);
     elements.device.disabled = true;
     elements.refresh.disabled = true;
     return;
   }
   for (const device of devices) {
-    const suffix = device.online ? "online" : formatAge(device.last_seen_age_ms);
+    const suffix = device.online ? "在线" : formatAge(device.last_seen_age_ms);
     elements.device.add(new Option(`${device.device_id} · ${suffix}`, device.device_id));
   }
   if (devices.some((device) => device.device_id === previous)) {
@@ -184,22 +324,22 @@ function fillDeviceList(devices) {
 async function connect() {
   configDirty = false;
   configEditBase = null;
-  setConnection("Connecting", "loading");
-  setMessage("Loading devices…");
+  setConnection("正在连接", "loading");
+  setMessage("正在加载设备…");
   try {
     const data = await apiFetch("/v1/console/devices");
     fillDeviceList(data.items);
     if (!data.items.length) {
-      setConnection("Connected", "neutral");
-      setMessage("Connected, but no device has uploaded telemetry yet.");
+      setConnection("已连接", "neutral");
+      setMessage("已连接，但还没有设备上传遥测数据。");
       return;
     }
     await loadSnapshot();
     startRefreshTimer();
   } catch (error) {
     stopRefreshTimer();
-    setConnection(error.status === 403 ? "Access denied" : "Unavailable", "offline");
-    setMessage(error.status === 403 ? "This console is available only from an approved LAN or Tailnet device." : error.message, "error");
+    setConnection(error.status === 403 ? "拒绝访问" : "服务不可用", "offline");
+    setMessage(error.status === 403 ? "此控制台仅允许从已批准的局域网或 Tailnet 设备访问。" : error.message, "error");
   }
 }
 
@@ -208,7 +348,7 @@ async function loadSnapshot({ quiet = false } = {}) {
   if (snapshotController) snapshotController.abort();
   const controller = new AbortController();
   snapshotController = controller;
-  if (!quiet) setMessage("Loading telemetry…");
+  if (!quiet) setMessage("正在加载遥测数据…");
   try {
     const deviceId = encodeURIComponent(elements.device.value);
     const hours = encodeURIComponent(elements.hours.value);
@@ -235,10 +375,10 @@ async function loadSnapshot({ quiet = false } = {}) {
     };
     renderSnapshot(snapshot);
     renderOperations(operationsData);
-    setMessage(`Updated ${formatEastern(snapshot.server_utc_ms, true)} Eastern`, "success");
+    setMessage(`更新于 ${formatEastern(snapshot.server_utc_ms, true)}（美东时间）`, "success");
   } catch (error) {
     if (error.name === "AbortError") return;
-    setConnection(error.status === 403 ? "Access denied" : "Unavailable", "offline");
+    setConnection(error.status === 403 ? "拒绝访问" : "服务不可用", "offline");
     setMessage(error.message, "error");
     if (error.status === 403) stopRefreshTimer();
   } finally {
@@ -248,24 +388,24 @@ async function loadSnapshot({ quiet = false } = {}) {
 
 function renderSnapshot(data) {
   const { device, latest, calibration, window: timeWindow } = data;
-  setConnection(device.online ? "Device online" : "Device offline", device.online ? "online" : "offline");
-  view.presence.textContent = latest ? latest.state.toUpperCase() : "NO DATA";
+  setConnection(device.online ? "设备在线" : "设备离线", device.online ? "online" : "offline");
+  view.presence.textContent = latest ? labelFor("presenceState", latest.state) : "暂无数据";
   view.statusCard.dataset.state = latest ? latest.state : "unknown";
   view.latestDetail.textContent = latest
-    ? `PIR ${latest.pir ? "active" : "quiet"} · sound ${latest.sound_active ? "active" : "quiet"}`
-    : "No sample";
+    ? `PIR ${latest.pir ? "有动作" : "静止"} · 声音${latest.sound_active ? "活跃" : "安静"}`
+    : "暂无采样";
   view.lastSeen.textContent = formatAge(device.last_seen_age_ms);
   view.lastSeenDetail.textContent = device.last_seen_at_ms == null
-    ? "No telemetry received"
-    : formatEastern(device.last_seen_at_ms, true) + " Eastern";
-  view.firmware.textContent = device.firmware_version || "Unknown";
+    ? "尚未收到遥测数据"
+    : formatEastern(device.last_seen_at_ms, true) + "（美东时间）";
+  view.firmware.textContent = device.firmware_version || "未知";
   view.deviceId.textContent = device.device_id;
   const reportedRevision = device.latest_reported_config_revision == null
     ? "?"
     : device.latest_reported_config_revision;
   view.revision.textContent = `${device.desired_config_revision} / ${reportedRevision}`;
-  view.revisionDetail.textContent = `${device.config_sync.replace("_", " ")} · desired / latest reported · highest seen ${device.highest_applied_config_revision}`;
-  view.sampleCount.textContent = timeWindow.sample_count.toLocaleString();
+  view.revisionDetail.textContent = `${labelFor("configSync", device.config_sync)} · 期望 / 最新上报 · 已应用最高版本 ${device.highest_applied_config_revision}`;
+  view.sampleCount.textContent = timeWindow.sample_count.toLocaleString("zh-CN");
   view.presentFraction.textContent = formatPercent(calibration.present_fraction);
   view.pirFraction.textContent = formatPercent(calibration.pir_active_fraction);
   view.soundFraction.textContent = formatPercent(calibration.sound_active_fraction);
@@ -274,18 +414,18 @@ function renderSnapshot(data) {
   view.thresholdMean.textContent = formatNumber(calibration.sound_threshold_mean);
   view.thresholdRatio.textContent = formatNumber(calibration.threshold_to_noise_ratio, 3);
   view.mismatchCount.textContent = String(calibration.feedback.mismatch);
-  view.feedbackCount.textContent = `${timeWindow.feedback_count} labels`;
+  view.feedbackCount.textContent = `${timeWindow.feedback_count} 条标注`;
   view.configRevision.textContent = configDirty && configEditBase
-    ? `Revision ${data.config.revision} · editing from ${configEditBase.revision}`
-    : `Revision ${data.config.revision}`;
+    ? `版本 ${data.config.revision} · 基于版本 ${configEditBase.revision} 编辑`
+    : `版本 ${data.config.revision}`;
   if (!configDirty) fillConfig(data.config, device.device_id);
   renderFeedback(data.feedback);
   renderTransitions(data.transitions);
   drawTimeline();
   const bucket = Math.round(timeWindow.bucket_ms / 1000);
   elements.caption.textContent = timeWindow.sample_count
-    ? `${timeWindow.sample_count.toLocaleString()} samples · ${timeWindow.returned_points.toLocaleString()} chart buckets at about ${bucket}s each · observed time with receive-time fallback`
-    : "No telemetry samples in this window.";
+    ? `${timeWindow.sample_count.toLocaleString("zh-CN")} 个样本 · ${timeWindow.returned_points.toLocaleString("zh-CN")} 个图表桶，每桶约 ${bucket} 秒 · 优先采用观测时间，缺失时使用接收时间`
+    : "此时间范围内无遥测样本。";
 }
 
 function fillConfig(configResponse, deviceId) {
@@ -321,7 +461,7 @@ function reviewConfig(event) {
     || snapshot.config.revision !== configEditBase.revision
   ) {
     fillConfig(snapshot.config, snapshot.device.device_id);
-    setMessage("Configuration changed while you were editing. Current values were reloaded; review your change again.", "error");
+    setMessage("编辑期间配置已发生变化。已重新加载当前值，请再次检查修改。", "error");
     return;
   }
   const reviewedConfig = readConfig();
@@ -331,12 +471,12 @@ function reviewConfig(event) {
   elements.changeList.replaceChildren();
   if (!changes.length) {
     configDirty = false;
-    setMessage("No configuration values changed.");
+    setMessage("配置值没有变化。");
     return;
   }
   for (const [name, value] of changes) {
     const item = document.createElement("li");
-    item.textContent = `${name}: ${configEditBase.config[name]} → ${value}`;
+    item.textContent = `${labelFor("configField", name)}：${configEditBase.config[name]} → ${value}`;
     elements.changeList.append(item);
   }
   pendingConfig = {
@@ -370,14 +510,14 @@ async function applyConfig() {
     configDirty = false;
     configEditBase = null;
     await loadSnapshot({ quiet: true });
-    setMessage("Configuration revision issued; waiting for device acknowledgement.", "success");
+    setMessage("配置版本已发布，正在等待设备确认。", "success");
   } catch (error) {
     elements.dialog.close();
     if (error.status === 409) {
       configDirty = false;
       configEditBase = null;
       await loadSnapshot({ quiet: true });
-      setMessage("Configuration changed elsewhere. Refreshed current values; review again.", "error");
+      setMessage("配置已在其他位置发生变化。已刷新当前值，请重新检查。", "error");
     } else {
       setMessage(error.message, "error");
     }
@@ -403,11 +543,11 @@ async function fileToBase64(file) {
 async function importReleaseBundle() {
   const [file] = elements.releaseBundle.files;
   if (!file) {
-    setReleaseMessage("Choose the canonical .ota.zip bundle first.", "error");
+    setReleaseMessage("请先选择规范的 .ota.zip 固件包。", "error");
     return;
   }
   elements.importRelease.disabled = true;
-  setReleaseMessage(`Reading and verifying ${file.name}…`);
+  setReleaseMessage(`正在读取并验证 ${file.name}…`);
   try {
     const imported = await apiFetch("/v1/console/releases/import", {
       method: "POST",
@@ -421,7 +561,7 @@ async function importReleaseBundle() {
     await loadSnapshot({ quiet: true });
     elements.releaseSelect.value = imported.release_id;
     elements.reviewRelease.disabled = false;
-    setReleaseMessage(`Verified ${imported.firmware_version} counter ${imported.release_counter}.`, "success");
+    setReleaseMessage(`已验证 ${imported.firmware_version}，发布计数器 ${imported.release_counter}。`, "success");
   } catch (error) {
     setReleaseMessage(error.message, "error");
   } finally {
@@ -436,7 +576,7 @@ function reviewRelease() {
   );
   if (!release) return;
   pendingRelease = release;
-  elements.releaseReviewText.textContent = `${snapshot.device.device_id} will request ${release.firmware_version}, release counter ${release.release_counter}, build ${release.build_id}, for ${release.hardware_model}. SHA-256 ${release.image_sha256}.`;
+  elements.releaseReviewText.textContent = `${snapshot.device.device_id} 将请求适用于 ${release.hardware_model} 的 ${release.firmware_version}，发布计数器 ${release.release_counter}，构建 ${release.build_id}。SHA-256 ${release.image_sha256}。`;
   elements.releaseConfirm.checked = false;
   elements.applyRelease.disabled = true;
   stopRefreshTimer();
@@ -458,7 +598,7 @@ async function applyRelease() {
     });
     elements.releaseDialog.close();
     await loadSnapshot({ quiet: true });
-    setReleaseMessage("Desired release selected; the device will fetch it on its next authenticated poll.", "success");
+    setReleaseMessage("已选择目标版本；设备将在下次通过身份验证的轮询中获取它。", "success");
   } catch (error) {
     elements.releaseDialog.close();
     setReleaseMessage(error.message, "error");
@@ -468,7 +608,7 @@ async function applyRelease() {
 async function issueCommand() {
   if (!snapshot) return;
   const action = elements.commandAction.value;
-  if (!window.confirm(`Issue one-shot command “${action}” to ${snapshot.device.device_id}?`)) return;
+  if (!window.confirm(`要向 ${snapshot.device.device_id} 下发一次性命令“${labelFor("commandAction", action)}”吗？`)) return;
   const command = { action };
   if (action === "set_log_level") {
     command.level = "debug_sensor";
@@ -489,7 +629,7 @@ async function issueCommand() {
       }),
     });
     await loadSnapshot({ quiet: true });
-    setMessage(`Command ${action} queued.`, "success");
+    setMessage(`命令“${labelFor("commandAction", action)}”已加入队列。`, "success");
   } catch (error) {
     setMessage(error.message, "error");
   } finally {
@@ -504,7 +644,7 @@ function renderFeedback(feedback) {
     const cell = document.createElement("td");
     cell.colSpan = 5;
     cell.className = "empty-cell";
-    cell.textContent = "No feedback in window";
+    cell.textContent = "此时间范围内无反馈";
     row.append(cell);
     view.feedbackBody.append(row);
     return;
@@ -516,9 +656,9 @@ function renderFeedback(feedback) {
     row.dataset.mismatch = String(mismatch);
     const values = [
       formatEastern(item.marker_ms, true),
-      item.actual_presence,
-      item.observed_state || "—",
-      item.source,
+      labelFor("feedbackPresence", item.actual_presence),
+      item.observed_state ? labelFor("presenceState", item.observed_state) : "—",
+      labelFor("feedbackSource", item.source),
       item.note || "—",
     ];
     for (const value of values) {
@@ -554,25 +694,25 @@ function appendCells(body, values, attributes = {}) {
 
 function renderTransitions(transitions) {
   if (!transitions.length) {
-    emptyTable(view.transitionBody, 8, "No transitions in window");
+    emptyTable(view.transitionBody, 8, "此时间范围内无状态变化");
     return;
   }
   view.transitionBody.replaceChildren();
   for (const item of [...transitions].reverse().slice(0, 200)) {
-    const pirAge = item.pir_age_ms == null ? "?" : `${item.pir_age_ms}ms ago`;
-    const soundAge = item.sound_age_ms == null ? "?" : `${item.sound_age_ms}ms ago`;
+    const pirAge = item.pir_age_ms == null ? "未知" : `${item.pir_age_ms} 毫秒前`;
+    const soundAge = item.sound_age_ms == null ? "未知" : `${item.sound_age_ms} 毫秒前`;
     const mic = item.mic_envelope == null
-      ? "legacy record"
-      : `${formatNumber(item.mic_envelope)} / ${formatNumber(item.sound_threshold)} (noise ${formatNumber(item.noise_floor)})`;
+      ? "旧版记录"
+      : `${formatNumber(item.mic_envelope)} / ${formatNumber(item.sound_threshold)}（噪声 ${formatNumber(item.noise_floor)}）`;
     appendCells(view.transitionBody, [
       formatEastern(item.marker_ms, true),
-      `${item.from_state || "boot"} → ${item.to_state}`,
-      item.reason,
-      item.pir == null ? "legacy record" : `${item.pir ? "active" : "quiet"} · ${pirAge}`,
-      item.sound_active == null ? "legacy record" : `${item.sound_active ? "active" : "quiet"} · ${soundAge}`,
+      `${item.from_state ? labelFor("presenceState", item.from_state) : "启动"} → ${labelFor("presenceState", item.to_state)}`,
+      labelFor("transitionReason", item.reason),
+      item.pir == null ? "旧版记录" : `${item.pir ? "有动作" : "静止"} · ${pirAge}`,
+      item.sound_active == null ? "旧版记录" : `${item.sound_active ? "活跃" : "安静"} · ${soundAge}`,
       mic,
-      item.brightness_before == null ? "legacy record" : `${item.brightness_before} → ${item.brightness_after}`,
-      `${item.build_id || "unknown"} · config ${item.applied_config_revision ?? "?"}`,
+      item.brightness_before == null ? "旧版记录" : `${item.brightness_before} → ${item.brightness_after}`,
+      `${item.build_id || "未知"} · 配置 ${item.applied_config_revision ?? "?"}`,
     ]);
   }
 }
@@ -587,35 +727,35 @@ function renderOperations(data) {
   const health = data.health;
   const latest = health.latest;
   view.healthConnectivity.textContent = health.server_online
-    ? `online · activity ${formatAge(snapshot.device.last_seen_age_ms)}`
-    : "offline by server observation";
-  view.healthLevel.textContent = latest ? latest.level.toUpperCase() : "UNKNOWN";
+    ? `在线 · 最近活动：${formatAge(snapshot.device.last_seen_age_ms)}`
+    : "服务器判定为离线";
+  view.healthLevel.textContent = latest ? labelFor("healthLevel", latest.level) : "未知";
   view.healthLevel.dataset.level = latest ? latest.level : "unknown";
   if (latest) {
     view.healthWifi.textContent = latest.wifi.connected
-      ? `${latest.wifi.ip || "no IP"} · ${latest.wifi.rssi_dbm ?? "?"} dBm · ${latest.wifi.reconnect_count} reconnects`
-      : "disconnected";
+      ? `${latest.wifi.ip || "无 IP"} · ${latest.wifi.rssi_dbm ?? "?"} dBm · 已重连 ${latest.wifi.reconnect_count} 次`
+      : "未连接";
     view.healthBuild.textContent = `${latest.firmware_version} · ${latest.build_id} · ${latest.reset_reason}`;
-    view.healthTasks.textContent = `main ${latest.tasks.main_heartbeat_ms}ms · uploader ${latest.tasks.uploader_heartbeat_ms}ms`;
-    view.healthQueues.textContent = `telemetry ${latest.queues.telemetry_depth}/${latest.queues.telemetry_capacity} · feedback ${latest.queues.feedback_depth}/${latest.queues.feedback_capacity}`;
-    view.healthStorage.textContent = `${latest.storage.spool_files} spool · ${latest.storage.dead_files} dead · ${latest.storage.littlefs_free_bytes.toLocaleString()} B free`;
-    view.healthMemory.textContent = `${latest.memory.free_heap_bytes.toLocaleString()} B free · minimum ${latest.memory.min_free_heap_bytes.toLocaleString()} B`;
-    view.healthSensors.textContent = `PIR ${latest.sensors.pir_status} · mic ${latest.sensors.mic_status}${latest.sensors.pir_only_mode ? " · PIR-only" : ""}`;
+    view.healthTasks.textContent = `主任务 ${latest.tasks.main_heartbeat_ms} 毫秒 · 上传任务 ${latest.tasks.uploader_heartbeat_ms} 毫秒`;
+    view.healthQueues.textContent = `遥测 ${latest.queues.telemetry_depth}/${latest.queues.telemetry_capacity} · 反馈 ${latest.queues.feedback_depth}/${latest.queues.feedback_capacity}`;
+    view.healthStorage.textContent = `${latest.storage.spool_files} 个待传文件 · ${latest.storage.dead_files} 个失效文件 · 可用 ${latest.storage.littlefs_free_bytes.toLocaleString("zh-CN")} B`;
+    view.healthMemory.textContent = `可用 ${latest.memory.free_heap_bytes.toLocaleString("zh-CN")} B · 历史最低 ${latest.memory.min_free_heap_bytes.toLocaleString("zh-CN")} B`;
+    view.healthSensors.textContent = `PIR ${labelFor("sensorHealth", latest.sensors.pir_status)} · 麦克风 ${labelFor("sensorHealth", latest.sensors.mic_status)}${latest.sensors.pir_only_mode ? " · 仅 PIR 模式" : ""}`;
   } else {
-    for (const node of [view.healthWifi, view.healthBuild, view.healthTasks, view.healthQueues, view.healthStorage, view.healthMemory, view.healthSensors]) node.textContent = "No health report";
+    for (const node of [view.healthWifi, view.healthBuild, view.healthTasks, view.healthQueues, view.healthStorage, view.healthMemory, view.healthSensors]) node.textContent = "暂无健康报告";
   }
 
   const releases = data.releases;
   const previousSelection = elements.releaseSelect.value;
   elements.releaseSelect.replaceChildren();
   if (!releases.length) {
-    elements.releaseSelect.add(new Option("No releases imported", ""));
+    elements.releaseSelect.add(new Option("尚未导入固件版本", ""));
     elements.reviewRelease.disabled = true;
   } else {
-    elements.releaseSelect.add(new Option("Choose verified release…", ""));
+    elements.releaseSelect.add(new Option("选择已验证的固件版本…", ""));
     for (const release of releases) {
       elements.releaseSelect.add(new Option(
-        `${release.firmware_version} · counter ${release.release_counter} · ${release.build_id}`,
+        `${release.firmware_version} · 计数器 ${release.release_counter} · ${release.build_id}`,
         release.release_id,
       ));
     }
@@ -630,43 +770,43 @@ function renderOperations(data) {
   view.releaseRunning.textContent = releaseLabel(status?.running_release_id, releases);
   view.releasePrevious.textContent = releaseLabel(status?.previous_release_id, releases);
   view.releaseGood.textContent = releaseLabel(status?.last_known_good_release_id, releases);
-  view.releasePhase.textContent = status ? status.phase.toUpperCase() : "IDLE";
+  view.releasePhase.textContent = status ? labelFor("releasePhase", status.phase) : "空闲";
   view.releaseProgress.textContent = status
-    ? `${status.progress_percent ?? "—"}% · rollback ${status.rollback_outcome}`
+    ? `${status.progress_percent ?? "—"}% · 回滚：${labelFor("rollbackOutcome", status.rollback_outcome)}`
     : "—";
   view.releaseError.textContent = status?.last_error || "—";
 
-  view.logCount.textContent = `${data.logs.retained_records} retained`;
-  if (!data.logs.items.length) emptyTable(view.logBody, 4, "No operational events");
+  view.logCount.textContent = `保留 ${data.logs.retained_records} 条`;
+  if (!data.logs.items.length) emptyTable(view.logBody, 4, "暂无运行事件");
   else {
     view.logBody.replaceChildren();
     for (const item of data.logs.items) appendCells(view.logBody, [
       formatEastern(item.received_at_ms, true),
-      item.level,
+      labelFor("logLevel", item.level),
       item.event_type,
       JSON.stringify(item.fields),
     ], { level: item.level });
   }
 
-  view.crashCount.textContent = `${data.crashes.retained_reports} retained`;
-  if (!data.crashes.items.length) emptyTable(view.crashBody, 4, "No crash reports");
+  view.crashCount.textContent = `保留 ${data.crashes.retained_reports} 条`;
+  if (!data.crashes.items.length) emptyTable(view.crashBody, 4, "暂无崩溃报告");
   else {
     view.crashBody.replaceChildren();
     for (const item of data.crashes.items) appendCells(view.crashBody, [
       formatEastern(item.received_at_ms, true),
       item.reset_reason,
       item.build_id,
-      `${item.symbolication_status}: ${item.summary.join(" · ")}`,
+      `${labelFor("symbolicationStatus", item.symbolication_status)}：${item.summary.join(" · ")}`,
     ]);
   }
 
-  if (!data.commands.length) emptyTable(view.commandBody, 5, "No commands");
+  if (!data.commands.length) emptyTable(view.commandBody, 5, "暂无命令");
   else {
     view.commandBody.replaceChildren();
     for (const item of data.commands) appendCells(view.commandBody, [
       formatEastern(item.created_at_ms, true),
-      item.command.action,
-      item.status,
+      labelFor("commandAction", item.command.action),
+      labelFor("commandStatus", item.status),
       String(item.delivery_attempts),
       item.latest_result ? JSON.stringify(item.latest_result) : "—",
     ], { status: item.status });
@@ -693,7 +833,7 @@ function drawTimeline() {
     context.fillStyle = "#91a2b2";
     context.font = "13px system-ui";
     context.textAlign = "center";
-    context.fillText("No samples in this window", width / 2, height / 2);
+    context.fillText("当前时间窗暂无样本", width / 2, height / 2);
     return;
   }
 

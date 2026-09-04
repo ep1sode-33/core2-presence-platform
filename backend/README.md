@@ -51,6 +51,11 @@ The LAN and Tailnet sources must respectively use `PRESENCE_CONSOLE_HOST` and
 browser requests need a matching same-origin Origin header. The ordinary
 `/v1/devices/...` endpoints remain bearer-protected.
 
+The Console presentation layer uses Simplified Chinese, including known state,
+health, release, and command labels. API paths, JSON keys, wire enum values,
+identifiers, and raw diagnostic payloads remain in their original English
+machine format; localization never changes data sent to or stored by the API.
+
 The console's online indicator means the server received telemetry or a health
 snapshot within the last 120 seconds. Configuration reads or writes do not
 refresh that signal.

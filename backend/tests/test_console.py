@@ -33,18 +33,115 @@ def test_console_shell_uses_a_trusted_source_without_a_token_flow(
         stylesheet = client.get("/console/assets/console.css")
 
         assert page.status_code == 200
-        assert page.headers["content-security-policy"].startswith("default-src 'self'")
-        assert page.headers["x-frame-options"] == "DENY"
+        assert script.status_code == 200
+        assert stylesheet.status_code == 200
+        for response in (page, script, stylesheet):
+            assert response.headers["content-security-policy"].startswith(
+                "default-src 'self'"
+            )
+            assert response.headers["x-frame-options"] == "DENY"
+            assert response.headers["cache-control"] == "no-cache"
         assert "secret-token" not in page.text
         assert "https://" not in page.text
-        assert script.status_code == 200
         assert "sessionStorage" not in script.text
         assert "localStorage" not in script.text
         assert "Authorization" not in script.text
         assert "Bearer token" not in page.text
         assert "https://" not in script.text
-        assert stylesheet.status_code == 200
         assert client.get("/console/assets/unknown.js").status_code == 404
+
+
+def test_console_display_is_chinese_without_changing_wire_values(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(database_path=tmp_path / "zh-console.db", api_token=None))
+    with TestClient(
+        app,
+        client=("192.168.0.42", 50_000),
+        headers={"Host": "192.168.0.46"},
+    ) as client:
+        page = client.get("/console").text
+        script = client.get("/console/assets/console.js").text
+
+    for text in (
+        '<html lang="zh-CN">',
+        "M5GO 人在检测控制台",
+        "设备自诊断",
+        "人在状态时间线",
+        "受限命令",
+        "确认新配置版本",
+        "确认目标固件版本",
+    ):
+        assert text in page
+    for text in (
+        'new Intl.DateTimeFormat("zh-CN"',
+        'present: "有人"',
+        'action_required: "需要处理"',
+        'diagnostic_snapshot: "捕获诊断快照"',
+        'setMessage("正在加载设备…")',
+        'context.fillText("当前时间窗暂无样本"',
+    ):
+        assert text in script
+
+    for old_text in (
+        "Presence Console",
+        "Loading devices…",
+        "Device self-diagnostics",
+        "Firmware release",
+        "Feedback markers",
+        "Restricted commands",
+        "Review changes",
+        "Confirm new revision",
+    ):
+        assert old_text.lower() not in page.lower()
+    for old_text in (
+        '"No devices found"',
+        '"Connecting"',
+        '"Device online"',
+        '"No configuration values changed."',
+        '"No transitions in window"',
+        '"No operational events"',
+        '"No commands"',
+        '"No samples in this window"',
+    ):
+        assert old_text not in script
+
+    # Localization is presentation-only: protocol keys and wire values remain English.
+    for action in (
+        "diagnostic_snapshot",
+        "set_log_level",
+        "recalibrate_microphone",
+        "retry_upload",
+        "reboot",
+        "open_dev_ota",
+    ):
+        assert f'value="{action}"' in page
+    for field in (
+        "minimum_on_ms",
+        "pir_hold_ms",
+        "sound_hold_ms",
+        "max_sound_bridge_ms",
+        "cooldown_ms",
+        "sound_factor",
+        "telemetry_interval_ms",
+        "upload_batch_size",
+    ):
+        assert f'name="{field}"' in page
+    assert 'created_by: "presence-console"' in script
+    assert 'command.level = "debug_sensor"' in script
+    assert "/v1/console/devices" in script
+    assert "JSON.stringify(item.fields)" in script
+    assert 'view.statusCard.dataset.state = latest ? latest.state : "unknown"' in script
+    assert (
+        'view.healthLevel.dataset.level = latest ? latest.level : "unknown"' in script
+    )
+    assert "appendCells(view.commandBody" in script
+    assert "{ status: item.status }" in script
+
+    # Backend diagnostics stay available on the Error object, but are never
+    # interpolated into the localized message shown by the console.
+    assert "error.detail = responseDetail" in script
+    assert "detail +=" not in script
 
 
 def test_console_data_uses_lan_source_while_existing_api_keeps_bearer_auth(
